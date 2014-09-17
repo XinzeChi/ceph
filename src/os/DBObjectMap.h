@@ -16,8 +16,8 @@
 #include "osd/osd_types.h"
 #include "common/Mutex.h"
 #include "common/Cond.h"
-#include "common/simple_cache.hpp"
 #include <boost/optional/optional_io.hpp>
+#include "common/random_cache.hpp"
 
 /**
  * DBObjectMap: Implements ObjectMap in terms of KeyValueDB
@@ -327,7 +327,7 @@ private:
   /// Implicit lock on Header->seq
   typedef ceph::shared_ptr<_Header> Header;
   Mutex cache_lock;
-  SimpleLRU<ghobject_t, _Header> caches;
+  RandomCache<ghobject_t, _Header> caches;
 
   string map_header_key(const ghobject_t &oid);
   string header_key(uint64_t seq);
