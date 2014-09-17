@@ -22,8 +22,10 @@
 #include "common/Mutex.h"
 #include "common/Cond.h"
 #include "common/shared_cache.hpp"
+#include "common/random_cache.hpp"
 #include "include/compat.h"
 #include "include/intarith.h"
+
 
 /**
  * FD Cache
@@ -48,44 +50,68 @@ public:
       VOID_TEMP_FAILURE_RETRY(::close(fd));
     }
   };
-
+  typedef ceph::shared_ptr<FD> FDRef;
 private:
   CephContext *cct;
   const int registry_shards;
   SharedLRU<ghobject_t, FD> *registry;
+  RandomCache<ghobject_t, FDRef> random_cache;
+  bool random;
 
 public:
   FDCache(CephContext *cct) : cct(cct),
   registry_shards(cct->_conf->filestore_fd_cache_shards) {
     assert(cct);
     cct->_conf->add_observer(this);
-    registry = new SharedLRU<ghobject_t, FD>[registry_shards];
-    for (int i = 0; i < registry_shards; ++i) {
-      registry[i].set_cct(cct);
-      registry[i].set_size(
-          MAX((cct->_conf->filestore_fd_cache_size / registry_shards), 1));
+    if (cct->_conf->filestore_fd_cache_random) {
+      random_cache.set_size(cct->_conf->filestore_fd_cache_size);
+      random = true;
+    } else {
+      registry = new SharedLRU<ghobject_t, FD>[registry_shards];
+      for (int i = 0; i < registry_shards; ++i) {
+        registry[i].set_cct(cct);
+        registry[i].set_size(
+            MAX((cct->_conf->filestore_fd_cache_size / registry_shards), 1));
+      }
     }
   }
   ~FDCache() {
     cct->_conf->remove_observer(this);
     delete[] registry;
   }
-  typedef ceph::shared_ptr<FD> FDRef;
 
   FDRef lookup(const ghobject_t &hoid) {
-    int registry_id = hoid.hobj.get_hash() % registry_shards;
-    return registry[registry_id].lookup(hoid);
+    if (random) {
+      FDRef ret;
+      random_cache.lookup(hoid, &ret);
+      return ret;
+    } else {
+      int registry_id = hoid.hobj.get_hash() % registry_shards;
+      return registry[registry_id].lookup(hoid);
+    }
   }
 
   FDRef add(const ghobject_t &hoid, int fd, bool *existed) {
-    int registry_id = hoid.hobj.get_hash() % registry_shards;
-    return registry[registry_id].add(hoid, new FD(fd), existed);
+    if (random){
+      FDRef ret = FDRef(new FD(fd));
+      random_cache.add(hoid, ret);
+      if (existed)
+        *existed = false;
+      return ret;
+    } else {
+      int registry_id = hoid.hobj.get_hash() % registry_shards;
+      return registry[registry_id].add(hoid, new FD(fd), existed);
+    }
   }
 
   /// clear cached fd for hoid, subsequent lookups will get an empty FD
   void clear(const ghobject_t &hoid) {
-    int registry_id = hoid.hobj.get_hash() % registry_shards;
-    registry[registry_id].purge(hoid);
+    if (random) {
+      random_cache.clear(hoid);
+    } else {
+      int registry_id = hoid.hobj.get_hash() % registry_shards;
+      registry[registry_id].purge(hoid);
+    }
   }
 
   /// md_config_obs_t
