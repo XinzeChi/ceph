@@ -259,7 +259,9 @@ int FileStore::lfn_open(coll_t cid,
   }
   if (!replaying) {
     *outfd = fdcache.lookup(oid);
+    logger->inc(l_os_fdcache);
     if (*outfd) {
+      logger->inc(l_os_fdcache_hit);
       if (need_lock) {
         ((*index).index)->access_lock.put_write();
       }
@@ -595,6 +597,8 @@ FileStore::FileStore(const std::string &base, const std::string &jdev, osflagbit
   plb.add_u64(l_os_oq_bytes, "op_queue_bytes");
   plb.add_u64_counter(l_os_bytes, "bytes");
   plb.add_time_avg(l_os_apply_lat, "apply_latency");
+  plb.add_u64_counter(l_os_fdcache, "fdcache");
+  plb.add_u64_counter(l_os_fdcache_hit, "fdcache_hit");
   plb.add_u64(l_os_committing, "committing");
 
   plb.add_u64_counter(l_os_commit, "commitcycle");

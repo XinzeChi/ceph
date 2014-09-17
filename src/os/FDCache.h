@@ -124,7 +124,7 @@ public:
   }
   void handle_conf_change(const md_config_t *conf,
 			  const std::set<std::string> &changed) {
-    if (changed.count("filestore_fd_cache_size")) {
+    if (changed.count("filestore_fd_cache_size") && !random) {
       for (int i = 0; i < registry_shards; ++i)
         registry[i].set_size(
               MAX((conf->filestore_fd_cache_size / registry_shards), 1));
