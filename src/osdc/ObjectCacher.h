@@ -24,9 +24,11 @@ enum {
 
   l_objectcacher_cache_ops_hit, // ops we satisfy completely from cache
   l_objectcacher_cache_ops_miss, // ops we don't satisfy completely from cache
+  l_objectcacher_cache_ops_wait_read, // ops waiting for concurrent reads to complete
 
   l_objectcacher_cache_bytes_hit, // bytes read directly from cache
   l_objectcacher_cache_bytes_miss, // bytes we couldn't read directly from cache
+  l_objectcacher_cache_bytes_wait_read, // bytes waiting for concurrent reads to complete
 
   l_objectcacher_data_read, // total bytes read out
   l_objectcacher_data_written, // bytes written to cache
@@ -57,7 +59,9 @@ class ObjectCacher {
     map<object_t, bufferlist*> read_data;  // bits of data as they come back
     bufferlist *bl;
     int flags;
-    OSDRead(snapid_t s, bufferlist *b, int f) : snap(s), bl(b), flags(f) {}
+    bool pending_read;
+    OSDRead(snapid_t s, bufferlist *b, int f)
+      : snap(s), bl(b), flags(f), pending_read(false) {}
   };
 
   OSDRead *prepare_read(snapid_t snap, bufferlist *b, int f) {
@@ -341,6 +345,9 @@ class ObjectCacher {
 
   vector<ceph::unordered_map<sobject_t, Object*> > objects; // indexed by pool_id
 
+  list<Context*> waitfor_read;
+  uint64_t pending_read_bytes;
+
   ceph_tid_t last_read_tid;
 
   set<BufferHead*>    dirty_or_tx_bh;
@@ -457,6 +464,7 @@ class ObjectCacher {
 
   int _readx(OSDRead *rd, ObjectSet *oset, Context *onfinish,
 	     bool external_call);
+  void retry_waiting_reads(OSDRead &rd, uint64_t total_bytes_read);
 
  public:
   void bh_read_finish(int64_t poolid, sobject_t oid, ceph_tid_t tid,
