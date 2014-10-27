@@ -3792,7 +3792,6 @@ void Client::handle_caps(MClientCaps *m)
     m->put();
     return;
   }
-  got_mds_push(session);
 
   if (m->osd_epoch_barrier && !objecter->have_map(m->osd_epoch_barrier)) {
     RetryCapMessage *rcm = new RetryCapMessage(this, m);
@@ -3811,6 +3810,8 @@ void Client::handle_caps(MClientCaps *m)
   if (m->osd_epoch_barrier > cap_epoch_barrier) {
     set_cap_epoch_barrier(m->osd_epoch_barrier);
   }
+
+  got_mds_push(session);
 
   m->clear_payload();  // for if/when we send back to MDS
 
