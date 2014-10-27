@@ -1905,6 +1905,15 @@ void MDS::clientreplay_start()
 void MDS::clientreplay_done()
 {
   dout(1) << "clientreplay_done" << dendl;
+
+  // Before going active, set OSD epoch barrier to latest (so that
+  // we don't risk handing out caps to clients with old OSD maps that
+  // might not include barriers from the previous incarnation of this MDS)
+  const OSDMap *osdmap = objecter->get_osdmap_read();
+  const epoch_t osd_epoch = osdmap->get_epoch();
+  objecter->put_osdmap_read();
+  set_osd_epoch_barrier(osd_epoch);
+
   request_state(MDSMap::STATE_ACTIVE);
 }
 
