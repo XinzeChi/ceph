@@ -2578,11 +2578,22 @@ void Client::send_cap(Inode *in, MetaSession *session, Cap *cap,
 	   << dendl;
 
   if (cct->_conf->client_inject_release_failure && revoking) {
+    const int would_have_issued = cap->issued & retain;
+    const int would_have_implemented = cap->implemented & (cap->issued | used);
     // Simulated bug:
     //  - tell the server we think issued is whatever they issued plus whatever we implemented
     //  - leave what we have implemented in place
     ldout(cct, 20) << __func__ << " injecting failure to release caps" << dendl;
     cap->issued = cap->issued | cap->implemented;
+
+    // Make an exception for revoking xattr caps: we are injecting
+    // failure to release other caps, but allow xattr because client
+    // will block on xattr ops if it can't release these to MDS (#9800)
+    cap->issued ^= (3 << CEPH_CAP_SXATTR) & revoking;
+    cap->implemented ^= (3 << CEPH_CAP_SXATTR) & revoking;
+
+    ldout(cct, 20) << __func__ << " issued " << ccap_string(cap->issued) << " vs " << ccap_string(would_have_issued) << dendl;
+    ldout(cct, 20) << __func__ << " implemented " << ccap_string(cap->implemented) << " vs " << ccap_string(would_have_implemented) << dendl;
   } else {
     // Normal behaviour
     cap->issued &= retain;
