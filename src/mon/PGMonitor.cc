@@ -955,7 +955,7 @@ void PGMonitor::check_osd_map(epoch_t epoch)
   }
 }
 
-void PGMonitor::register_pg(pg_pool_t& pool, pg_t pgid, epoch_t epoch, bool new_pool)//, utime_t ctime)
+void PGMonitor::register_pg(pg_pool_t& pool, pg_t pgid, epoch_t epoch, bool new_pool)
 {
   pg_t parent;
   int split_bits = 0;
@@ -1045,7 +1045,7 @@ bool PGMonitor::register_new_pgs()
 	continue;
       }
       created++;
-      register_pg(pool, pgid, pool.get_last_change(), new_pool);//, pool.pool_ctime);
+      register_pg(pool, pgid, pool.get_last_change(), new_pool);
     }
   }
 
@@ -1187,6 +1187,8 @@ void PGMonitor::send_pg_creates(int osd, Connection *con)
 			      pg_map.pg_stat[*q].parent_split_bits);
     // Need the create time from the monitor using his clock to set last_scrub_stamp
     // upon pg creation.
+    // XXX: A split will get the last_scrub_stamp and last_deep_scrub_stamp from the parent
+    // so in that case this shouldn't be used.
     m->ctimes[*q] = pg_map.pg_stat[*q].last_scrub_stamp;
   }
 

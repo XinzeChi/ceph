@@ -2577,7 +2577,6 @@ int OSDMap::build_simple(CephContext *cct, epoch_t e, uuid_d &fsid,
     pools[pool].set_pg_num(poolbase << pg_bits);
     pools[pool].set_pgp_num(poolbase << pgp_bits);
     pools[pool].last_change = epoch;
-    //pools[pool].pool_ctime = created;
     pool_name[pool] = *p;
     name_pool[*p] = pool;
   }

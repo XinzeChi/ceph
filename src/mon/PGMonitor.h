@@ -115,7 +115,6 @@ private:
   map<int,utime_t> last_osd_report;
 
   void register_pg(pg_pool_t& pool, pg_t pgid, epoch_t epoch, bool new_pool);
-		   //utime_t created);
 
   /**
    * check latest osdmap for new pgs to register

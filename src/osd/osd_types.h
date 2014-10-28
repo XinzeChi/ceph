@@ -980,8 +980,6 @@ public:
   uint64_t expected_num_objects; ///< expected number of objects on this pool, a value of 0 indicates
                                  ///< user does not specify any expected value
 
-  //utime_t pool_ctime;              ///< Time the pool was created
-
   pg_pool_t()
     : flags(0), type(0), size(0), min_size(0),
       crush_ruleset(0), object_hash(0),
