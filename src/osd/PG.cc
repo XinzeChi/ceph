@@ -309,8 +309,10 @@ bool PG::proc_replica_info(pg_shard_t from, const pg_info_t &oinfo)
   might_have_unfound.insert(from);
   
   unreg_next_scrub();
-  if (info.history.merge(oinfo.history))
+  stringstream ss;
+  if (info.history.merge(oinfo.history, ss))
     dirty_info = true;
+  dout(0) << ss << dendl;
   reg_next_scrub();
   
   // stray?
@@ -4333,7 +4335,9 @@ void PG::share_pg_info()
     pg_shard_t peer = *i;
     if (peer_info.count(peer)) {
       peer_info[peer].last_epoch_started = info.last_epoch_started;
-      peer_info[peer].history.merge(info.history);
+      stringstream ss;
+      peer_info[peer].history.merge(info.history, ss);
+      dout(0) << ss << dendl;
     }
     MOSDPGInfo *m = new MOSDPGInfo(get_osdmap()->get_epoch());
     m->pg_list.push_back(
@@ -4387,7 +4391,9 @@ void PG::share_pg_log()
 void PG::update_history_from_master(pg_history_t new_history)
 {
   unreg_next_scrub();
-  info.history.merge(new_history);
+  stringstream ss;
+  info.history.merge(new_history, ss);
+  dout(0) << ss << dendl;
   reg_next_scrub();
 }
 
@@ -4799,8 +4805,10 @@ void PG::proc_primary_info(ObjectStore::Transaction &t, const pg_info_t &oinfo)
   assert(!is_primary());
 
   unreg_next_scrub();
-  if (info.history.merge(oinfo.history))
+  stringstream ss;
+  if (info.history.merge(oinfo.history, ss))
     dirty_info = true;
+  dout(0) << ss << dendl;
   reg_next_scrub();
 
   if (last_complete_ondisk.epoch >= info.history.last_epoch_started) {

@@ -980,6 +980,8 @@ public:
   uint64_t expected_num_objects; ///< expected number of objects on this pool, a value of 0 indicates
                                  ///< user does not specify any expected value
 
+  //utime_t pool_ctime;              ///< Time the pool was created
+
   pg_pool_t()
     : flags(0), type(0), size(0), min_size(0),
       crush_ruleset(0), object_hash(0),
@@ -1587,7 +1589,7 @@ struct pg_history_t {
       last_epoch_started(0), last_epoch_clean(0), last_epoch_split(0),
       same_up_since(0), same_interval_since(0), same_primary_since(0) {}
   
-  bool merge(const pg_history_t &other) {
+  bool merge(const pg_history_t &other, stringstream &ss) {
     // Here, we only update the fields which cannot be calculated from the OSDmap.
     bool modified = false;
     if (epoch_created < other.epoch_created) {
@@ -1610,7 +1612,10 @@ struct pg_history_t {
       last_scrub = other.last_scrub;
       modified = true;
     }
+ss << "DZAFMAN pg_history_t:: merge last_scrub_stamp " << last_scrub_stamp << std::endl;
+ss << "DZAFMAN pg_history_t:: merge other.last_scrub_stamp " << other.last_scrub_stamp << std::endl;
     if (other.last_scrub_stamp > last_scrub_stamp) {
+ss << "DZAFMAN pg_history_t:: merge NOW SET TO other.last_scrub_stamp " << other.last_scrub_stamp << std::endl;
       last_scrub_stamp = other.last_scrub_stamp;
       modified = true;
     }

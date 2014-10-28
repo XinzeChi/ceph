@@ -25,10 +25,11 @@
 
 struct MOSDPGCreate : public Message {
 
-  const static int HEAD_VERSION = 2;
+  const static int HEAD_VERSION = 3;
 
   version_t          epoch;
   map<pg_t,pg_create_t> mkpg;
+  map<pg_t,utime_t> ctimes;
 
   MOSDPGCreate()
     : Message(MSG_OSD_PG_CREATE, HEAD_VERSION) {}
@@ -44,12 +45,16 @@ public:
   void encode_payload(uint64_t features) {
     ::encode(epoch, payload);
     ::encode(mkpg, payload);
+    ::encode(ctimes, payload);
   }
   void decode_payload() {
     bufferlist::iterator p = payload.begin();
     ::decode(epoch, p);
     if (header.version >= 2) {
       ::decode(mkpg, p);
+      if (header.version >= 3) {
+	::decode(ctimes, p);
+      }
     } else {
       __u32 n;
       ::decode(n, p);
@@ -69,10 +74,12 @@ public:
 
   void print(ostream& out) const {
     out << "osd_pg_create(";
+    map<pg_t,utime_t>::const_iterator ci = ctimes.begin();
     for (map<pg_t,pg_create_t>::const_iterator i = mkpg.begin();
          i != mkpg.end();
-         ++i) {
-      out << "pg" << i->first << "," << i->second.created << "; ";
+         ++i, ++ci) {
+      assert(ci != ctimes.end() && ci->first == i->first);
+      out << "pg" << i->first << "," << i->second.created << "@" << ci->second << "; ";
     }
     out << ")";
   }

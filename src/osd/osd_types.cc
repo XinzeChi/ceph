@@ -1112,6 +1112,7 @@ void pg_pool_t::encode(bufferlist& bl, uint64_t features) const
   }
 
   ENCODE_START(17, 5, bl);
+  //ENCODE_START(18, 5, bl);
   ::encode(type, bl);
   ::encode(size, bl);
   ::encode(crush_ruleset, bl);
@@ -1153,12 +1154,14 @@ void pg_pool_t::encode(bufferlist& bl, uint64_t features) const
   ::encode(last_force_op_resend, bl);
   ::encode(min_read_recency_for_promote, bl);
   ::encode(expected_num_objects, bl);
+  //::encode(pool_ctime, bl);
   ENCODE_FINISH(bl);
 }
 
 void pg_pool_t::decode(bufferlist::iterator& bl)
 {
   DECODE_START_LEGACY_COMPAT_LEN(17, 5, 5, bl);
+  //DECODE_START_LEGACY_COMPAT_LEN(18, 5, 5, bl);
   ::decode(type, bl);
   ::decode(size, bl);
   ::decode(crush_ruleset, bl);
@@ -1270,6 +1273,9 @@ void pg_pool_t::decode(bufferlist::iterator& bl)
   } else {
     expected_num_objects = 0;
   }
+  //if (struct_v >= 18) {
+  //  ::decode(pool_ctime, bl);
+  //}
   DECODE_FINISH(bl);
   calc_pg_masks();
 }
@@ -1374,6 +1380,7 @@ ostream& operator<<(ostream& out, const pg_pool_t& p)
   out << " stripe_width " << p.get_stripe_width();
   if (p.expected_num_objects)
     out << " expected_num_objects " << p.expected_num_objects;
+  //out << " pool_ctime " << p.pool_ctime;
   return out;
 }
 

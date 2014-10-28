@@ -6929,9 +6929,11 @@ void OSD::handle_pg_create(OpRequestRef op)
 
   int num_created = 0;
 
+  map<pg_t,utime_t>::iterator ci = m->ctimes.begin();
   for (map<pg_t,pg_create_t>::iterator p = m->mkpg.begin();
        p != m->mkpg.end();
-       ++p) {
+       ++p, ++ci) {
+    assert(ci != m->ctimes.end() && ci->first == p->first);
     epoch_t created = p->second.created;
     pg_t parent = p->second.parent;
     if (p->second.split_bits) // Skip split pgs
@@ -6948,7 +6950,7 @@ void OSD::handle_pg_create(OpRequestRef op)
       continue;
     }
 
-    dout(20) << "mkpg " << on << " e" << created << dendl;
+    dout(20) << "mkpg " << on << " e" << created << "@" << ci->second << dendl;
    
     // is it still ours?
     vector<int> up, acting;
@@ -6986,9 +6988,9 @@ void OSD::handle_pg_create(OpRequestRef op)
     history.last_epoch_clean = created;
     // Newly created PGs don't need to scrub immediately, so mark them
     // as scrubbed at creation time.
-    utime_t now = ceph_clock_now(NULL);
-    history.last_scrub_stamp = now;
-    history.last_deep_scrub_stamp = now;
+    history.last_scrub_stamp = ci->second;
+    history.last_deep_scrub_stamp = ci->second;
+dout(0) << "DZAFMAN handle_pg_create " << pgid << " time " << ci->second << dendl;
     bool valid_history = project_pg_history(
       pgid, history, created, up, up_primary, acting, acting_primary);
     /* the pg creation message must have come from a mon and therefore

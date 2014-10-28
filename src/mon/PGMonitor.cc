@@ -955,12 +955,13 @@ void PGMonitor::check_osd_map(epoch_t epoch)
   }
 }
 
-void PGMonitor::register_pg(pg_pool_t& pool, pg_t pgid, epoch_t epoch, bool new_pool)
+void PGMonitor::register_pg(pg_pool_t& pool, pg_t pgid, epoch_t epoch, bool new_pool)//, utime_t ctime)
 {
   pg_t parent;
   int split_bits = 0;
+  bool parent_found = false;
+  parent = pgid;
   if (!new_pool) {
-    parent = pgid;
     while (1) {
       // remove most significant bit
       int msb = pool.calc_bits_of(parent.ps());
@@ -972,6 +973,7 @@ void PGMonitor::register_pg(pg_pool_t& pool, pg_t pgid, epoch_t epoch, bool new_
       if (pg_map.pg_stat.count(parent) &&
 	  pg_map.pg_stat[parent].state != PG_STATE_CREATING) {
 	dout(10) << "  parent is " << parent << dendl;
+	parent_found = true;
 	break;
       }
     }
@@ -983,10 +985,19 @@ void PGMonitor::register_pg(pg_pool_t& pool, pg_t pgid, epoch_t epoch, bool new_
   stats.parent = parent;
   stats.parent_split_bits = split_bits;
 
-  utime_t now = ceph_clock_now(g_ceph_context);
-  stats.last_scrub_stamp = now;
-  stats.last_deep_scrub_stamp = now;
-  stats.last_clean_scrub_stamp = now;
+  if (parent_found) {
+    stats.last_scrub_stamp = pg_map.pg_stat[parent].last_scrub_stamp;
+dout(0) << "DZAFMAN register_pg pgid " << pgid << " using parent last_scrub_stamp" << stats.last_scrub_stamp << dendl;
+    stats.last_deep_scrub_stamp = pg_map.pg_stat[parent].last_deep_scrub_stamp;
+    stats.last_clean_scrub_stamp = pg_map.pg_stat[parent].last_clean_scrub_stamp;
+  } else {
+    utime_t now = ceph_clock_now(g_ceph_context);
+    stats.last_scrub_stamp = now;
+    stats.last_deep_scrub_stamp = now;
+    //stats.last_clean_scrub_stamp = now;
+dout(0) << "DZAFMAN register_pg pgid " << pgid << " using created time " << now << dendl;
+  }
+
 
   if (split_bits == 0) {
     dout(10) << "register_new_pgs  will create " << pgid << dendl;
@@ -1034,7 +1045,7 @@ bool PGMonitor::register_new_pgs()
 	continue;
       }
       created++;
-      register_pg(pool, pgid, pool.get_last_change(), new_pool);
+      register_pg(pool, pgid, pool.get_last_change(), new_pool);//, pool.pool_ctime);
     }
   }
 
@@ -1174,6 +1185,9 @@ void PGMonitor::send_pg_creates(int osd, Connection *con)
     m->mkpg[*q] = pg_create_t(pg_map.pg_stat[*q].created,
 			      pg_map.pg_stat[*q].parent,
 			      pg_map.pg_stat[*q].parent_split_bits);
+    // Need the create time from the monitor using his clock to set last_scrub_stamp
+    // upon pg creation.
+    m->ctimes[*q] = pg_map.pg_stat[*q].last_scrub_stamp;
   }
 
   if (con) {
