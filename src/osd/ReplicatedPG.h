@@ -35,6 +35,7 @@
 #include "messages/MOSDSubOp.h"
 
 #include "common/sharedptr_registry.hpp"
+#include "common/shared_cache_new.hpp"
 
 #include "PGBackend.h"
 #include "ReplicatedBackend.h"
@@ -437,6 +438,7 @@ public:
     bool modify;          // (force) modification (even if op_t is empty)
     bool user_modify;     // user-visible modification
     bool undirty;         // user explicitly un-dirtying this object
+    bool modify_snapset;
 
     // side effects
     list<watch_info_t> watch_connects;
@@ -538,7 +540,7 @@ public:
 	      ReplicatedPG *_pg) :
       op(_op), reqid(_reqid), ops(_ops), obs(_obs), snapset(0),
       new_obs(_obs->oi, _obs->exists),
-      modify(false), user_modify(false), undirty(false),
+      modify(false), user_modify(false), undirty(false), modify_snapset(false),
       bytes_written(0), bytes_read(0), user_at_version(0),
       current_osd_subop_num(0),
       op_t(NULL),
@@ -787,6 +789,8 @@ protected:
   void simple_repop_submit(RepGather *repop);
 
   // hot/cold tracking
+  uint64_t ops_total;
+  uint64_t ops_hit;
   HitSetRef hit_set;        ///< currently accumulating HitSet
   utime_t hit_set_start_stamp;    ///< time the current HitSet started recording
 
@@ -867,7 +871,7 @@ protected:
   friend struct C_OnPushCommit;
 
   // projected object info
-  SharedPtrRegistry<hobject_t, ObjectContext> object_contexts;
+  SharedLRUNew<hobject_t, ObjectContext> object_contexts;
   // map from oid.snapdir() to SnapSetContext *
   map<hobject_t, SnapSetContext*> snapset_contexts;
   Mutex snapset_contexts_lock;
@@ -1403,6 +1407,7 @@ public:
   void on_flushed();
   void on_removal(ObjectStore::Transaction *t);
   void on_shutdown();
+  void print_msg(stringstream& ss);
 
   // attr cache handling
   void replace_cached_attrs(

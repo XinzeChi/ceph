@@ -482,7 +482,7 @@ public:
 		 pg_info_t &info, LogEntryHandler *rollbacker,
 		 bool &dirty_info, bool &dirty_big_info);
 
-  void write_log(ObjectStore::Transaction& t, const hobject_t &log_oid);
+  void write_log(ObjectStore::Transaction& t, const hobject_t &log_oid, map<string,bufferlist> *keys = NULL);
 
   static void write_log(ObjectStore::Transaction& t, pg_log_t &log,
     const hobject_t &log_oid, map<eversion_t, hobject_t> &divergent_priors);
@@ -496,7 +496,8 @@ public:
     const set<eversion_t> &trimmed,
     bool dirty_divergent_priors,
     bool touch_log,
-    set<string> *log_keys_debug
+    set<string> *log_keys_debug,
+    map<string,bufferlist> *pg_log = NULL
     );
 
   bool read_log(ObjectStore *store, coll_t coll, hobject_t log_oid,

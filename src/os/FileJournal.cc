@@ -58,7 +58,14 @@ int FileJournal::_open(bool forwrite, bool create)
   if (forwrite) {
     flags = O_RDWR;
     if (directio)
-      flags |= O_DIRECT | O_DSYNC;
+      flags |= O_DIRECT;
+    if (g_conf->osd_journal_write_barrier) {
+      flags |= O_DSYNC;
+      dout(0) << __func__ << " barrier " << dendl;
+    }
+    else {
+      dout(0) << __func__ << " no barrier " << dendl;
+    }
   } else {
     flags = O_RDONLY;
   }
@@ -828,6 +835,12 @@ void FileJournal::queue_completions_thru(uint64_t seq)
     completion_pop_front();
     utime_t lat = now;
     lat -= next.start;
+    static uint64_t num = 0;
+    num++;
+    if (num % 1000 == 0) {
+      dout(4) << __func__ << " lat " << lat << dendl;
+      num = 0 ;
+    }
     dout(10) << "queue_completions_thru seq " << seq
 	     << " queueing seq " << next.seq
 	     << " " << next.finish
@@ -1099,7 +1112,10 @@ void FileJournal::flush()
 void FileJournal::write_thread_entry()
 {
   dout(10) << "write_thread_entry start" << dendl;
+  utime_t min_interval;
+  min_interval.set_from_double(0.001);
   while (1) {
+    utime_t start = ceph_clock_now(g_ceph_context);
     {
       Mutex::Locker locker(writeq_lock);
       if (writeq.empty()) {
@@ -1143,6 +1159,7 @@ void FileJournal::write_thread_entry()
       }
     }
 #endif
+    utime_t lock = ceph_clock_now(g_ceph_context);
 
     Mutex::Locker locker(write_lock);
     uint64_t orig_ops = 0;
@@ -1162,6 +1179,7 @@ void FileJournal::write_thread_entry()
       logger->inc(l_os_j_wr);
       logger->inc(l_os_j_wr_bytes, bl.length());
     }
+    utime_t pre_write = ceph_clock_now(g_ceph_context);
 
 #ifdef HAVE_LIBAIO
     if (aio)
@@ -1171,6 +1189,29 @@ void FileJournal::write_thread_entry()
 #else
     do_write(bl);
 #endif
+    utime_t end = ceph_clock_now(g_ceph_context);
+    utime_t used = end - start; 
+    utime_t lock_time = lock - start; 
+    utime_t write_time = pre_write - lock; 
+    dout(5) << __func__ << " ops " << orig_ops <<  " used " << lock_time << " " << pre_write << " " << (end - start) << dendl;
+    static uint64_t sum_usec = 0; 
+    static uint64_t lock_usec = 0; 
+    static uint64_t write_usec = 0; 
+    static uint64_t num = 0; 
+    static uint64_t ops = 0;
+    sum_usec += used.to_nsec()/1000;
+    lock_usec += lock_time.to_nsec()/1000;
+    write_usec += write_time.to_nsec()/1000;
+    ops += orig_ops;
+    num++;
+    if (num % 1000 == 0) { 
+      dout(4) << __func__ << " stat ops " << ops << " " << sum_usec << " " << num << " " << lock_usec << " " << write_usec << dendl;
+      sum_usec = 0; 
+      lock_usec = 0; 
+      write_usec = 0; 
+      num = 0; 
+      ops = 0;
+    }
     put_throttle(orig_ops, orig_bytes);
   }
 
@@ -1324,6 +1365,7 @@ void FileJournal::write_finish_thread_entry()
 #ifdef HAVE_LIBAIO
   dout(10) << "write_finish_thread_entry enter" << dendl;
   while (true) {
+    utime_t start = ceph_clock_now(g_ceph_context);
     {
       Mutex::Locker locker(aio_lock);
       if (aio_queue.empty()) {
@@ -1347,6 +1389,7 @@ void FileJournal::write_finish_thread_entry()
       assert(0 == "got unexpected error from io_getevents");
     }
     
+    utime_t check = ceph_clock_now(g_ceph_context);
     {
       Mutex::Locker locker(aio_lock);
       for (int i=0; i<r; i++) {
@@ -1362,6 +1405,25 @@ void FileJournal::write_finish_thread_entry()
       }
       check_aio_completion();
     }
+    utime_t end = ceph_clock_now(g_ceph_context);
+    utime_t used = end - start; 
+    utime_t check_time = check - start; 
+    dout(5) << __func__ << " r " << r <<  " used " << check_time << " " << (end - start) << dendl;
+    static uint64_t sum_usec = 0; 
+    static uint64_t check_usec = 0; 
+    static uint64_t num_r = 0; 
+    static uint64_t num = 0; 
+    sum_usec += used.to_nsec()/1000;
+    check_usec += check_time.to_nsec()/1000;
+    num_r += r;
+    num++;
+    if (num % 1000 == 0) { 
+      dout(4) << __func__ << " stat r " << num_r << " " << num << " " << sum_usec << " " << check_usec << dendl;
+      sum_usec = 0; 
+      check_usec = 0; 
+      num_r = 0; 
+      num = 0; 
+   } 
   }
   dout(10) << "write_finish_thread_entry exit" << dendl;
 #endif
@@ -1420,11 +1482,11 @@ void FileJournal::submit_entry(uint64_t seq, bufferlist& e, int alignment,
 			       Context *oncommit, TrackedOpRef osd_op)
 {
   // dump on queue
+  utime_t start = ceph_clock_now(g_ceph_context);
   dout(5) << "submit_entry seq " << seq
 	  << " len " << e.length()
 	  << " (" << oncommit << ")" << dendl;
   assert(e.length() > 0);
-
   dout(30) << "XXX throttle take " << e.length() << dendl;
   throttle_ops.take(1);
   throttle_bytes.take(e.length());
@@ -1438,13 +1500,43 @@ void FileJournal::submit_entry(uint64_t seq, bufferlist& e, int alignment,
   }
 
   {
+    utime_t time1 = ceph_clock_now(g_ceph_context);
     Mutex::Locker l1(writeq_lock);  // ** lock **
     Mutex::Locker l2(completions_lock);  // ** lock **
     completions.push_back(
       completion_item(
 	seq, oncommit, ceph_clock_now(g_ceph_context), osd_op));
+
+    utime_t time2 = ceph_clock_now(g_ceph_context);
     writeq.push_back(write_item(seq, e, alignment, osd_op));
+    static uint64_t write_num = 0;
+    write_num++;
     writeq_cond.Signal();
+
+    utime_t end = ceph_clock_now(g_ceph_context);
+    utime_t used = end - start;
+    utime_t time1_used = time1 - start;
+    utime_t time2_used = time2 - time1;
+    dout(5) << __func__ << " used " << time1_used << "" << time2_used << " " << used << dendl;
+    static uint64_t sum_usec = 0;
+    static uint64_t sum_time1_usec = 0;
+    static uint64_t sum_time2_usec = 0;
+    static uint64_t sum_sumbmit_bytes = 0;
+    static uint64_t num = 0;
+    sum_usec += used.to_nsec()/1000;
+    sum_time1_usec += time1_used.to_nsec()/1000;
+    sum_time2_usec += time2_used.to_nsec()/1000;
+    sum_sumbmit_bytes += e.length();
+    num++;
+    if (num % 1000 == 0) {
+      dout(4) << __func__ << " stat " << num << " " << sum_time1_usec/num << " " << sum_time2_usec/num << " " 
+              << sum_sumbmit_bytes << " " << sum_usec/num << dendl;
+      sum_usec = 0;
+      sum_time1_usec = 0;
+      sum_time2_usec = 0;
+      sum_sumbmit_bytes = 0;
+      num = 0;
+    }
   }
 }
 

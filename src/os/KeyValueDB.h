@@ -8,6 +8,8 @@
 #include <map>
 #include <string>
 #include "include/memory.h"
+#include "include/unordered_set.h"
+#include "include/unordered_map.h"
 #include <boost/scoped_ptr.hpp>
 #include "ObjectMap.h"
 
@@ -31,6 +33,24 @@ public:
 	set(prefix, it->first, it->second);
     }
 
+    void set(
+      const string &prefix,                 ///< [in] Prefix for keys
+      const std::list<pair<string, bufferlist> > &to_set ///< [in] keys/values to set
+    ) {
+      std::list<pair<string, bufferlist> >::const_iterator it;
+      for (it = to_set.begin(); it != to_set.end(); ++it)
+	set(prefix, it->first, it->second);
+    }
+
+    void set(
+      const string &prefix,                 ///< [in] Prefix for keys
+      const unordered_map<string, bufferlist> &to_set ///< [in] keys/values to set
+    ) {
+      unordered_map<string, bufferlist>::const_iterator it;
+      for (it = to_set.begin(); it != to_set.end(); ++it)
+	set(prefix, it->first, it->second);
+    }
+
     /// Set Key
     virtual void set(
       const string &prefix,   ///< [in] Prefix for the key
@@ -48,6 +68,17 @@ public:
       for (it = keys.begin(); it != keys.end(); ++it)
 	rmkey(prefix, *it);
     }
+
+    /// Removes Keys
+    void rmkeys(
+      const string &prefix,   ///< [in] Prefix to search for
+      const unordered_set<string> &keys ///< [in] Keys to remove
+    ) {
+      unordered_set<string>::const_iterator it;
+      for (it = keys.begin(); it != keys.end(); ++it)
+	rmkey(prefix, *it);
+    }
+
 
     /// Remove Key
     virtual void rmkey(

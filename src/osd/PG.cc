@@ -2496,7 +2496,7 @@ int PG::_write_info(ObjectStore::Transaction& t, epoch_t epoch,
     map<epoch_t,pg_interval_t> &past_intervals,
     interval_set<snapid_t> &snap_collections,
     hobject_t &infos_oid,
-    __u8 info_struct_v, bool dirty_big_info, bool force_ver)
+    __u8 &info_struct_v, bool dirty_big_info, bool force_ver)
 {
   // pg state
 
@@ -2582,11 +2582,11 @@ epoch_t PG::peek_map_epoch(ObjectStore *store, coll_t coll, hobject_t &infos_oid
   return cur_epoch;
 }
 
-void PG::write_if_dirty(ObjectStore::Transaction& t)
+void PG::write_if_dirty(ObjectStore::Transaction& t, map<string,bufferlist> *keys)
 {
   if (dirty_big_info || dirty_info)
     write_info(t);
-  pg_log.write_log(t, log_oid);
+  pg_log.write_log(t, log_oid, keys);
 }
 
 void PG::trim_peers()
@@ -2659,14 +2659,14 @@ void PG::append_log(
     pg_log.clear_can_rollback_to();
 
   dout(10) << "append_log  adding " << keys.size() << " keys" << dendl;
-  t.omap_setkeys(coll_t::META_COLL, log_oid, keys);
+//  t.omap_setkeys(coll_t::META_COLL, log_oid, keys);
   PGLogEntryHandler handler;
   pg_log.trim(&handler, trim_to, info);
   handler.apply(this, &t);
 
   // update the local pg, pg log
   dirty_info = true;
-  write_if_dirty(t);
+  write_if_dirty(t, &keys);
 }
 
 bool PG::check_log_for_corruption(ObjectStore *store)

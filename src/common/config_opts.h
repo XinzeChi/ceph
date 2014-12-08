@@ -526,6 +526,12 @@ OPTION(osd_pg_epoch_persisted_max_stale, OPT_U32, 200)
 
 OPTION(osd_min_pg_log_entries, OPT_U32, 3000)  // number of entries to keep in the pg log when trimming it
 OPTION(osd_max_pg_log_entries, OPT_U32, 10000) // max entries, say when degraded, before we trim
+OPTION(osd_pg_log_entries_batch_trim, OPT_U32, 10)
+OPTION(filestore_dbcache_commit_min, OPT_U32, 100000)
+OPTION(filestore_dbcache_commit_max, OPT_U32, 5000)
+OPTION(filestore_dbcache_commit, OPT_BOOL, false)
+OPTION(osd_journal_write_barrier, OPT_BOOL, true)
+OPTION(osd_pg_object_context_cache_count, OPT_INT, 10240)
 OPTION(osd_op_complaint_time, OPT_FLOAT, 30) // how many seconds old makes an op complaint-worthy
 OPTION(osd_command_max_records, OPT_INT, 256)
 OPTION(osd_op_log_threshold, OPT_INT, 5) // how many op log messages to show in one go

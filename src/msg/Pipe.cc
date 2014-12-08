@@ -1478,6 +1478,8 @@ void Pipe::reader()
     }
 
     else if (tag == CEPH_MSGR_TAG_MSG) {
+      utime_t start = ceph_clock_now(msgr->cct);
+      ldout(msgr->cct,15) << __func__ << " start " << dendl;
       ldout(msgr->cct,20) << "reader got MSG" << dendl;
       Message *m = 0;
       int r = read_message(&m, auth_handler.get());
@@ -1535,6 +1537,18 @@ void Pipe::reader()
 	delay_thread->queue(release, m);
       } else {
 	in_q->enqueue(m, m->get_priority(), conn_id);
+      }
+      utime_t end = ceph_clock_now(msgr->cct);
+      utime_t used = end - start; 
+      ldout(msgr->cct,5) << __func__ << " finish used " << (end - start)<< dendl;
+      static uint64_t sum_usec = 0; 
+      static uint64_t num = 0; 
+      sum_usec += used.to_nsec()/1000;
+      num++;
+      if (num % 1000 == 0) { 
+        ldout(msgr->cct,4) << __func__ << " stat " << sum_usec << " " << num << " "  << sum_usec/num << dendl;
+        sum_usec = 0; 
+        num = 0; 
       }
     } 
     
@@ -1607,6 +1621,8 @@ void Pipe::writer()
     if (state != STATE_CONNECTING && state != STATE_WAIT && state != STATE_STANDBY &&
 	(is_queued() || in_seq > in_seq_acked)) {
 
+      utime_t start = ceph_clock_now(msgr->cct);
+      ldout(msgr->cct,15) << __func__ << " start " << dendl;
       // keepalive?
       if (send_keepalive) {
 	int rc;
@@ -1715,6 +1731,18 @@ void Pipe::writer()
 	  fault();
         }
 	m->put();
+      }
+      utime_t end = ceph_clock_now(msgr->cct);
+      utime_t used = end - start; 
+      ldout(msgr->cct,5) << __func__ << " finish used " << (end - start) << dendl;
+      static uint64_t sum_usec = 0; 
+      static uint64_t num = 0; 
+      sum_usec += used.to_nsec()/1000;
+      num++;
+      if (num % 1000 == 0) { 
+        ldout(msgr->cct,4) << __func__ << " stat " << sum_usec << " " << num << " "  << sum_usec/num << dendl;
+        sum_usec = 0; 
+        num = 0; 
       }
       continue;
     }

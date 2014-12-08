@@ -518,6 +518,22 @@ int DBObjectMap::set_keys(const ghobject_t &oid,
   return db->submit_transaction(t);
 }
 
+int DBObjectMap::set_keys(const ghobject_t &oid,
+			  const unordered_map<string, bufferlist> &set,
+			  const SequencerPosition *spos)
+{
+  KeyValueDB::Transaction t = db->get_transaction();
+  Header header = lookup_create_map_header(oid, t);
+  if (!header)
+    return -EINVAL;
+  if (check_spos(oid, header, spos))
+    return 0;
+
+  t->set(user_prefix(header), set);
+
+  return db->submit_transaction(t);
+}
+
 int DBObjectMap::set_header(const ghobject_t &oid,
 			    const bufferlist &bl,
 			    const SequencerPosition *spos)
@@ -717,6 +733,80 @@ int DBObjectMap::rm_keys(const ghobject_t &oid,
     map<string, string> new_complete;
     map<string, bufferlist> to_write;
     for(set<string>::const_iterator i = to_clear.begin();
+	i != to_clear.end();
+      ) {
+      unsigned copied = 0;
+      iter->lower_bound(*i);
+      ++i;
+      if (!iter->valid())
+	break;
+      string begin = iter->key();
+      if (!iter->on_parent())
+	iter->next_parent();
+      if (new_complete.size() && new_complete.rbegin()->second == begin) {
+	begin = new_complete.rbegin()->first;
+      }
+      while (iter->valid() && copied < 20) {
+	if (!to_clear.count(iter->key()))
+	  to_write[iter->key()].append(iter->value());
+	if (i != to_clear.end() && *i <= iter->key()) {
+	  ++i;
+	  copied = 0;
+	}
+
+	iter->next_parent();
+	copied++;
+      }
+      if (iter->valid()) {
+	new_complete[begin] = iter->key();
+      } else {
+	new_complete[begin] = "";
+	break;
+      }
+    }
+    t->set(user_prefix(header), to_write);
+    merge_new_complete(header, new_complete, iter, t);
+    keep_parent = need_parent(iter);
+    if (keep_parent < 0)
+      return keep_parent;
+  }
+  if (!keep_parent) {
+    copy_up_header(header, t);
+    Header parent = lookup_parent(header);
+    if (!parent)
+      return -EINVAL;
+    parent->num_children--;
+    _clear(parent, t);
+    header->parent = 0;
+    set_map_header(oid, *header, t);
+    t->rmkeys_by_prefix(complete_prefix(header));
+  }
+  return db->submit_transaction(t);
+}
+
+int DBObjectMap::rm_keys(const ghobject_t &oid,
+			 const unordered_set<string> &to_clear,
+			 const SequencerPosition *spos)
+{
+  Header header = lookup_map_header(oid);
+  if (!header)
+    return -ENOENT;
+  KeyValueDB::Transaction t = db->get_transaction();
+  if (check_spos(oid, header, spos))
+    return 0;
+  t->rmkeys(user_prefix(header), to_clear);
+  if (!header->parent) {
+    return db->submit_transaction(t);
+  }
+
+  // Copy up keys from parent around to_clear
+  int keep_parent;
+  {
+    DBObjectMapIterator iter = _get_iterator(header);
+    iter->seek_to_first();
+    map<string, string> new_complete;
+    map<string, bufferlist> to_write;
+    for(unordered_set<string>::const_iterator i = to_clear.begin();
 	i != to_clear.end();
       ) {
       unsigned copied = 0;

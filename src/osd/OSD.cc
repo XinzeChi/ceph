@@ -1517,6 +1517,9 @@ void OSD::create_logger()
   osd_plb.add_u64_counter(l_osd_agent_flush, "agent_flush");
   osd_plb.add_u64_counter(l_osd_agent_evict, "agent_evict");
 
+  osd_plb.add_u64_counter(l_osd_object_ctx_cache_hit, "object_ctx_cache_hit");
+  osd_plb.add_u64_counter(l_osd_object_ctx_cache_total, "object_ctx_cache_total");
+
   logger = osd_plb.create_perf_counters();
   cct->get_perfcounters_collection()->add(logger);
 }
@@ -4761,6 +4764,7 @@ bool OSDService::ObjecterDispatcher::ms_get_authorizer(int dest_type,
 
 bool OSD::ms_dispatch(Message *m)
 {
+  utime_t start = ceph_clock_now(cct);
   if (m->get_type() == MSG_OSD_MARK_ME_DOWN) {
     service.got_stop_ack();
     m->put();
@@ -4770,6 +4774,7 @@ bool OSD::ms_dispatch(Message *m)
   // lock!
 
   osd_lock.Lock();
+  utime_t lock = ceph_clock_now(cct);
   if (is_stopping()) {
     osd_lock.Unlock();
     m->put();
@@ -4791,6 +4796,22 @@ bool OSD::ms_dispatch(Message *m)
 
   osd_lock.Unlock();
 
+  utime_t end = ceph_clock_now(cct);
+  utime_t used = end - start; 
+  utime_t lock_time = lock - start; 
+  dout(5) << __func__ << " used " << lock_time << " " << (end - start) << dendl;
+  static uint64_t sum_usec = 0; 
+  static uint64_t lock_usec = 0; 
+  static uint64_t num = 0; 
+  sum_usec += used.to_nsec()/1000;
+  lock_usec += lock_time.to_nsec()/1000;
+  num++;
+  if (num % 1000 == 0) { 
+    dout(4) << __func__ << " stat " << sum_usec << " " << num << " " << lock_usec/num << " "  << sum_usec/num << dendl;
+    sum_usec = 0; 
+    lock_usec = 0;
+    num = 0; 
+  }
   return true;
 }
 
@@ -7644,24 +7665,49 @@ void OSD::OpWQ::_enqueue_front(pair<PGRef, OpRequestRef> item)
 
 PGRef OSD::OpWQ::_dequeue()
 {
+  utime_t start = ceph_clock_now(osd->cct);
+  utime_t lock_time = ceph_clock_now(osd->cct); 
   assert(!pqueue.empty());
   PGRef pg;
   {
+    utime_t lock_start = ceph_clock_now(osd->cct);
     Mutex::Locker l(qlock);
     pair<PGRef, OpRequestRef> ret = pqueue.dequeue();
     pg = ret.first;
     pg_for_processing[&*pg].push_back(ret.second);
+    utime_t lock_end = ceph_clock_now(osd->cct);
+    lock_time = lock_end - lock_start;
   }
   osd->logger->set(l_osd_opq, pqueue.length());
+  utime_t end = ceph_clock_now(osd->cct);
+  utime_t used = end - start; 
+  lgeneric_subdout(osd->cct, osd, 5) << __func__ <<  " used " << lock_time << " " << " " << (end - start) << dendl;
+  static uint64_t sum_usec = 0; 
+  static uint64_t lock_usec = 0; 
+  static uint64_t num = 0; 
+  sum_usec += used.to_nsec()/1000;
+  lock_usec += lock_time.to_nsec()/1000;
+  num++;
+  if (num % 1000 == 0) { 
+    lgeneric_subdout(osd->cct, osd, 4) << __func__ << " stat " << " " << sum_usec << " " << num << " " << sum_usec/num << " " << lock_usec/num << dendl;
+    sum_usec = 0; 
+    lock_usec = 0; 
+    num = 0; 
+  }
   return pg;
 }
 
 void OSD::OpWQ::_process(PGRef pg, ThreadPool::TPHandle &handle)
 {
+  utime_t start = ceph_clock_now(osd->cct);
   pg->lock_suspend_timeout(handle);
   OpRequestRef op;
+  utime_t lock_time = ceph_clock_now(osd->cct); 
   {
+    utime_t lock_start = ceph_clock_now(osd->cct);
     Mutex::Locker l(qlock);
+    utime_t lock_end = ceph_clock_now(osd->cct);
+    lock_time = lock_end - lock_start;
     if (!pg_for_processing.count(&*pg)) {
       pg->unlock();
       return;
@@ -7684,6 +7730,22 @@ void OSD::OpWQ::_process(PGRef pg, ThreadPool::TPHandle &handle)
 
   osd->dequeue_op(pg, op, handle);
   pg->unlock();
+
+  utime_t end = ceph_clock_now(osd->cct);
+  utime_t used = end - start; 
+  lgeneric_subdout(osd->cct, osd, 5) << __func__ <<  " used " << lock_time << " " << " " << (end - start) << dendl;
+  static uint64_t sum_usec = 0; 
+  static uint64_t lock_usec = 0; 
+  static uint64_t num = 0; 
+  sum_usec += used.to_nsec()/1000;
+  lock_usec += lock_time.to_nsec()/1000;
+  num++;
+  if (num % 1000 == 0) { 
+    lgeneric_subdout(osd->cct, osd, 4) << __func__ << " stat " << " " << sum_usec << " " << num << " " << sum_usec/num << " " << lock_usec/num << dendl;
+    sum_usec = 0; 
+    lock_usec = 0;
+    num = 0; 
+  }
 }
 
 

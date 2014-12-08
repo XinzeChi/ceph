@@ -655,7 +655,7 @@ void PGLog::merge_log(ObjectStore::Transaction& t,
 }
 
 void PGLog::write_log(
-  ObjectStore::Transaction& t, const hobject_t &log_oid)
+  ObjectStore::Transaction& t, const hobject_t &log_oid, map<string,bufferlist> *keys)
 {
   if (is_dirty()) {
     dout(10) << "write_log with: "
@@ -673,7 +673,8 @@ void PGLog::write_log(
       trimmed,
       dirty_divergent_priors,
       !touched_log,
-      (pg_log_debug ? &log_keys_debug : 0));
+      (pg_log_debug ? &log_keys_debug : 0),
+      keys);
     undirty();
   } else {
     dout(10) << "log is not dirty" << dendl;
@@ -699,7 +700,8 @@ void PGLog::_write_log(
   const set<eversion_t> &trimmed,
   bool dirty_divergent_priors,
   bool touch_log,
-  set<string> *log_keys_debug
+  set<string> *log_keys_debug,
+  map<string,bufferlist> *pg_log
   )
 {
   set<string> to_remove;
@@ -731,12 +733,17 @@ void PGLog::_write_log(
   }
 
   map<string,bufferlist> keys;
+  if (pg_log) {
+    keys.swap(*pg_log);
+  }
   for (list<pg_log_entry_t>::iterator p = log.log.begin();
        p != log.log.end() && p->version < dirty_to;
        ++p) {
     bufferlist bl(sizeof(*p) * 2);
-    p->encode_with_checksum(bl);
-    keys[p->get_key_name()].claim(bl);
+    if (!keys.count(p->get_key_name())){
+      p->encode_with_checksum(bl);
+      keys[p->get_key_name()].claim(bl);
+    }
   }
 
   for (list<pg_log_entry_t>::reverse_iterator p = log.log.rbegin();
@@ -745,8 +752,10 @@ void PGLog::_write_log(
 	 p->version >= dirty_to;
        ++p) {
     bufferlist bl(sizeof(*p) * 2);
-    p->encode_with_checksum(bl);
-    keys[p->get_key_name()].claim(bl);
+    if (!keys.count(p->get_key_name())) {
+      p->encode_with_checksum(bl);
+      keys[p->get_key_name()].claim(bl);
+    }
   }
 
   if (log_keys_debug) {
@@ -764,8 +773,12 @@ void PGLog::_write_log(
   }
   ::encode(log.can_rollback_to, keys["can_rollback_to"]);
 
-  t.omap_rmkeys(coll_t::META_COLL, log_oid, to_remove);
-  t.omap_setkeys(coll_t::META_COLL, log_oid, keys);
+  dout(20) << __func__ << " to_remove size is " << to_remove.size() << dendl;
+  if (to_remove.size()) {
+    t.omap_rmkeys(coll_t::META_COLL, log_oid, to_remove);
+  }
+  if (keys.size())
+    t.omap_setkeys(coll_t::META_COLL, log_oid, keys);
 }
 
 bool PGLog::read_log(ObjectStore *store, coll_t coll, hobject_t log_oid,

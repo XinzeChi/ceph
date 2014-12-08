@@ -9,6 +9,8 @@
 
 #include <vector>
 #include "include/memory.h"
+#include "include/unordered_map.h"
+#include "include/unordered_set.h"
 #include <boost/scoped_ptr.hpp>
 
 #include "ObjectMap.h"
@@ -78,6 +80,12 @@ public:
     const SequencerPosition *spos=0
     );
 
+  int set_keys(
+    const ghobject_t &oid,
+    const unordered_map<string, bufferlist> &set,
+    const SequencerPosition *spos=0
+    );
+
   int set_header(
     const ghobject_t &oid,
     const bufferlist &bl,
@@ -102,6 +110,12 @@ public:
   int rm_keys(
     const ghobject_t &oid,
     const set<string> &to_clear,
+    const SequencerPosition *spos=0
+    );
+
+  int rm_keys(
+    const ghobject_t &oid,
+    const unordered_set<string> &to_clear,
     const SequencerPosition *spos=0
     );
 

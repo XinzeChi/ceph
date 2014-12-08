@@ -112,7 +112,7 @@ void DispatchQueue::entry()
 	  uint64_t msize = m->get_dispatch_throttle_size();
 	  m->set_dispatch_throttle_size(0);  // clear it out, in case we requeue this message.
 
-	  ldout(cct,1) << "<== " << m->get_source_inst()
+	  ldout(cct,20) << "<== " << m->get_source_inst()
 		       << " " << m->get_seq()
 		       << " ==== " << *m
 		       << " ==== " << m->get_payload().length() << "+" << m->get_middle().length()

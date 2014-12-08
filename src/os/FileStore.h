@@ -25,6 +25,7 @@
 using namespace std;
 
 #include "include/unordered_map.h"
+#include "include/unordered_set.h"
 
 #include "include/assert.h"
 
@@ -261,6 +262,19 @@ private:
 
   Mutex fdcache_lock;
   FDCache fdcache;
+  Mutex dbcache_lock;
+  Mutex dbache_transaction_lock;
+  bool dbcache_flush;
+  uint32_t dbcache_items;
+  typedef unordered_map<coll_t, unordered_map<ghobject_t, unordered_map<string, bufferlist> > > dbcache_setkeys;
+  typedef unordered_map<coll_t, unordered_map<ghobject_t, unordered_set<string> > > dbcache_rmkeys;
+  dbcache_setkeys setkeys_dbcache;
+  dbcache_rmkeys  rmkeys_dbcache;
+  bool insert_dbcache(coll_t cid, ghobject_t &hoid, map<string, bufferlist> &aset);
+  bool insert_dbcache(coll_t cid, ghobject_t &hoid, set<string> &keys);
+  bool flush_dbcache();
+  void dbcache_to_omap();
+
   WBThrottle wbthrottle;
 
   Sequencer default_osr;
@@ -379,8 +393,9 @@ public:
     return _do_transactions(tls, op_seq, 0);
   }
   unsigned _do_transaction(
-    Transaction& t, uint64_t op_seq, int trans_num,
+    Transaction& t, uint64_t op_seq, int trans_num, int op,
     ThreadPool::TPHandle *handle);
+  bool _do_transaction_result_handle(int r, int op);
 
   int queue_transactions(Sequencer *osr, list<Transaction*>& tls,
 			 TrackedOpRef op = TrackedOpRef(),
@@ -572,9 +587,14 @@ private:
 		  const SequencerPosition &spos);
   int _omap_setkeys(coll_t cid, const ghobject_t &oid,
 		    const map<string, bufferlist> &aset,
-		    const SequencerPosition &spos);
+		    const SequencerPosition &spos, bool ignore_spos = false);
+  int _omap_setkeys(coll_t cid, const ghobject_t &oid,
+		    const unordered_map<string, bufferlist> &aset,
+		    const SequencerPosition &spos, bool ignore_spos = false);
   int _omap_rmkeys(coll_t cid, const ghobject_t &oid, const set<string> &keys,
-		   const SequencerPosition &spos);
+		   const SequencerPosition &spos, bool ignore_spos = false);
+  int _omap_rmkeys(coll_t cid, const ghobject_t &oid, const unordered_set<string> &keys,
+		   const SequencerPosition &spos, bool ignore_spos = false);
   int _omap_rmkeyrange(coll_t cid, const ghobject_t &oid,
 		       const string& first, const string& last,
 		       const SequencerPosition &spos);
@@ -619,6 +639,10 @@ private:
   void set_xattr_limits_via_conf();
   uint32_t m_filestore_max_inline_xattr_size;
   uint32_t m_filestore_max_inline_xattrs;
+  uint32_t m_filestore_dbcache_commit_min;
+  uint32_t m_filestore_dbcache_commit_max;
+  bool     m_dbcache_full;
+  bool     m_dbcache_commit;
 
   FSSuperblock superblock;
 

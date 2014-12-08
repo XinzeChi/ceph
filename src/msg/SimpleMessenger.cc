@@ -97,7 +97,7 @@ int SimpleMessenger::_send_message(Message *m, const entity_inst_t& dest,
 
   if (!m->get_priority()) m->set_priority(get_default_send_priority());
  
-  ldout(cct,1) << (lazy ? "lazy " : "") <<"--> " << dest.name << " "
+  ldout(cct,20) << (lazy ? "lazy " : "") <<"--> " << dest.name << " "
           << dest.addr << " -- " << *m
     	  << " -- ?+" << m->get_data().length()
 	  << " " << m 
@@ -125,7 +125,7 @@ int SimpleMessenger::_send_message(Message *m, Connection *con, bool lazy)
 
   if (!m->get_priority()) m->set_priority(get_default_send_priority());
 
-  ldout(cct,1) << (lazy ? "lazy " : "") << "--> " << con->get_peer_addr()
+  ldout(cct,20) << (lazy ? "lazy " : "") << "--> " << con->get_peer_addr()
       << " -- " << *m
       << " -- ?+" << m->get_data().length()
       << " " << m << " con " << con

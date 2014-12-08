@@ -1035,6 +1035,10 @@ void ReplicatedPG::calc_trim_to()
       min_last_complete_ondisk != pg_trim_to &&
       pg_log.get_log().approx_size() > target) {
     size_t num_to_trim = pg_log.get_log().approx_size() - target;
+    if (num_to_trim < cct->_conf->osd_pg_log_entries_batch_trim) {
+      return;
+    }
+    dout(10) << "calc_trim_to trimming " << num_to_trim << " entries, min_last_complete_ondisk " << min_last_complete_ondisk << dendl;
     list<pg_log_entry_t>::const_iterator it = pg_log.get_log().log.begin();
     eversion_t new_trim_to;
     for (size_t i = 0; i < num_to_trim; ++i) {
@@ -1060,10 +1064,13 @@ ReplicatedPG::ReplicatedPG(OSDService *o, OSDMapRef curmap,
   pgbackend(
     PGBackend::build_pg_backend(
       _pool.info, curmap, this, coll_t(p), coll_t::make_temp_coll(p), o->store, cct)),
+  object_contexts(o->cct, g_conf->osd_pg_object_context_cache_count),
   snapset_contexts_lock("ReplicatedPG::snapset_contexts"),
   temp_seq(0),
   snap_trimmer_machine(this)
 { 
+  ops_total = 0,
+  ops_hit = 0 ,
   missing_loc.set_backend_predicates(
     pgbackend->get_is_readable_predicate(),
     pgbackend->get_is_recoverable_predicate());
@@ -1190,6 +1197,7 @@ bool ReplicatedPG::check_src_targ(const hobject_t& soid, const hobject_t& toid) 
  */
 void ReplicatedPG::do_op(OpRequestRef op)
 {
+  utime_t start = ceph_clock_now(g_ceph_context);
   MOSDOp *m = static_cast<MOSDOp*>(op->get_req());
   assert(m->get_header().type == CEPH_MSG_OSD_OP);
   if (op->includes_pg_op()) {
@@ -1310,10 +1318,22 @@ void ReplicatedPG::do_op(OpRequestRef op)
     return;
   }
 
+  utime_t start1 = ceph_clock_now(g_ceph_context);
   int r = find_object_context(
     oid, &obc, can_create,
     m->get_flags() & CEPH_OSD_FLAG_MAP_SNAP_CLONE,
     &missing_oid);
+  utime_t end1 = ceph_clock_now(g_ceph_context);
+  utime_t used1 = end1 - start1;
+  static uint64_t sum_usec1 = 0;
+  static uint64_t num1 = 0;
+  sum_usec1 += used1.to_nsec()/1000;
+  num1++;
+  if (num1 % 1000 == 0) {
+    dout(4) << __func__ << " find_object_context stat " << sum_usec1 << " " << num1 << " "  << sum_usec1/num1 << dendl;
+    sum_usec1 = 0;
+    num1 = 0;
+  }
 
   if (r == -EAGAIN) {
     // If we're not the primary of this OSD, and we have
@@ -1350,12 +1370,19 @@ void ReplicatedPG::do_op(OpRequestRef op)
     hit_set->insert(oid);
     if (hit_set->is_full() ||
 	hit_set_start_stamp + pool.info.hit_set_period <= m->get_recv_stamp()) {
+      dout(20) << __func__ << " ops_total " << ops_total
+	       << " ops_hit " << ops_hit << ", hit rate " << ops_hit * 100.0 /ops_total << " %" << dendl;
       hit_set_persist();
+
     }
 
     if (agent_state)
       agent_choose_mode();
   }
+
+  dout(20) << __func__ << " ops_total " << ops_total
+	       << " ops_hit " << ops_hit << ", hit rate " << ops_hit * 100.0 /ops_total << " %" << dendl;
+  assert(ops_total >= ops_hit);
 
   if ((m->get_flags() & CEPH_OSD_FLAG_IGNORE_CACHE) == 0 &&
       maybe_handle_cache(op, write_ordered, obc, r, missing_oid, false))
@@ -1547,6 +1574,19 @@ void ReplicatedPG::do_op(OpRequestRef op)
   ctx->src_obc = src_obc;
 
   execute_ctx(ctx);
+
+  utime_t end = ceph_clock_now(g_ceph_context);
+  utime_t used = end - start; 
+  dout(10) << __func__ << " " << head  << " used " << used << dendl;
+  static uint64_t sum_usec = 0; 
+  static uint64_t num = 0; 
+  sum_usec += used.to_nsec()/1000;
+  num++;
+  if (num % 1000 == 0) { 
+    dout(4) << __func__ << " stat " << sum_usec << " " << num << " "  << sum_usec/num << dendl;
+    sum_usec = 0; 
+    num = 0; 
+  }    
 }
 
 bool ReplicatedPG::maybe_handle_cache(OpRequestRef op,
@@ -1555,6 +1595,7 @@ bool ReplicatedPG::maybe_handle_cache(OpRequestRef op,
                                       int r, const hobject_t& missing_oid,
 				      bool must_promote)
 {
+  ops_total++;
   if (obc)
     dout(25) << __func__ << " " << obc->obs.oi << " "
 	     << (obc->obs.exists ? "exists" : "DNE")
@@ -1582,6 +1623,7 @@ bool ReplicatedPG::maybe_handle_cache(OpRequestRef op,
 
   case pg_pool_t::CACHEMODE_WRITEBACK:
     if (obc.get() && obc->obs.exists) {
+      ops_hit++;
       return false;
     }
     if (agent_state &&
@@ -1596,6 +1638,7 @@ bool ReplicatedPG::maybe_handle_cache(OpRequestRef op,
       return true;
     }
     if (!must_promote && can_skip_promote(op, obc)) {
+      ops_hit++;
       return false;
     }
     promote_object(op, obc, missing_oid);
@@ -1603,6 +1646,7 @@ bool ReplicatedPG::maybe_handle_cache(OpRequestRef op,
 
   case pg_pool_t::CACHEMODE_FORWARD:
     if (obc.get() && obc->obs.exists) {
+      ops_hit++;
       return false;
     }
     if (must_promote)
@@ -1614,6 +1658,7 @@ bool ReplicatedPG::maybe_handle_cache(OpRequestRef op,
   case pg_pool_t::CACHEMODE_READONLY:
     // TODO: clean this case up
     if (obc.get() && obc->obs.exists) {
+      ops_hit++;
       return false;
     }
     if (!obc.get() && r == -ENOENT) {
@@ -1626,6 +1671,7 @@ bool ReplicatedPG::maybe_handle_cache(OpRequestRef op,
       return true;
     }
     // crap, there was a failure of some kind
+    ops_hit++;
     return false;
 
   default:
@@ -4625,6 +4671,7 @@ inline int ReplicatedPG::_delete_oid(OpContext *ctx, bool no_whiteout)
     dout(20) << __func__ << " setting whiteout on " << soid << dendl;
     oi.set_flag(object_info_t::FLAG_WHITEOUT);
     ctx->delta_stats.num_whiteouts++;
+    ctx->modify_snapset = true;
     t->touch(soid);
     osd->logger->inc(l_osd_tier_whiteout);
     return 0;
@@ -4778,12 +4825,13 @@ void ReplicatedPG::make_writeable(OpContext *ctx)
 
   // clone?
   assert(soid.snap == CEPH_NOSNAP);
-  dout(20) << "make_writeable " << soid << " snapset=" << ctx->snapset
+  dout(20) << "make_writeable " << soid << " snapset=" << *(ctx->snapset) << " new_snapset " << ctx->new_snapset
 	   << "  snapc=" << snapc << dendl;;
   
   bool was_dirty = ctx->obc->obs.oi.is_dirty();
   if (ctx->new_obs.exists) {
     // we will mark the object dirty
+    dout(20) << "ctx->undirty " << ctx->undirty << " was_dirty " << was_dirty << dendl;
     if (ctx->undirty && was_dirty) {
       dout(20) << " clearing DIRTY flag" << dendl;
       assert(ctx->new_obs.oi.is_dirty());
@@ -4830,6 +4878,8 @@ void ReplicatedPG::make_writeable(OpContext *ctx)
   if ((ctx->obs->exists && !ctx->obs->oi.is_whiteout()) && // head exist(ed)
       snapc.snaps.size() &&                 // there are snaps
       snapc.snaps[0] > ctx->new_snapset.seq) {  // existing object is old
+    ctx->modify_snapset = true;
+    dout(10) << "clone object " << snapc.snaps[0] << " " << ctx->new_snapset.seq << dendl;
     // clone
     hobject_t coid = soid;
     coid.snap = snapc.seq;
@@ -4908,10 +4958,16 @@ void ReplicatedPG::make_writeable(OpContext *ctx)
     last_clone_oid.snap = ctx->new_snapset.clone_overlap.rbegin()->first;
     if (is_present_clone(last_clone_oid)) {
       interval_set<uint64_t> &newest_overlap = ctx->new_snapset.clone_overlap.rbegin()->second;
+      interval_set<uint64_t> old_overlap = newest_overlap;
+      dout(20) << "newest_overlap modify before " << old_overlap << " " << newest_overlap << " ctx->modified_ranges " << ctx->modified_ranges << dendl;
       ctx->modified_ranges.intersection_of(newest_overlap);
       // modified_ranges is still in use by the clone
       add_interval_usage(ctx->modified_ranges, ctx->delta_stats);
       newest_overlap.subtract(ctx->modified_ranges);
+      if (!(ctx->modified_ranges.empty()) && old_overlap != newest_overlap) {
+        ctx->modify_snapset = true;
+      }
+      dout(20) << "newest_overlap modify after " << old_overlap << " " << newest_overlap << " ctx->modified_ranges " << ctx->modified_ranges << dendl;
     }
   }
   
@@ -4921,6 +4977,10 @@ void ReplicatedPG::make_writeable(OpContext *ctx)
   ctx->op_t = t;
 
   // update snapset with latest snap context
+  if (ctx->new_snapset.seq != snapc.seq || ctx->new_snapset.snaps != snapc.snaps ||
+       ctx->new_snapset.head_exists != ctx->new_obs.exists) {
+    ctx->modify_snapset = true;
+  }
   ctx->new_snapset.seq = snapc.seq;
   ctx->new_snapset.snaps = snapc.snaps;
   ctx->new_snapset.head_exists = ctx->new_obs.exists;
@@ -5120,7 +5180,9 @@ void ReplicatedPG::finish_ctx(OpContext *ctx, int log_op_type, bool maintain_ssc
   bufferlist bss;
 
   if (soid.snap == CEPH_NOSNAP && maintain_ssc) {
-    ::encode(ctx->new_snapset, bss);
+    if (ctx->modify_snapset) {
+      ::encode(ctx->new_snapset, bss);
+    }
     assert(ctx->new_obs.exists == ctx->new_snapset.head_exists);
 
     if (ctx->new_obs.exists) {
@@ -5146,6 +5208,10 @@ void ReplicatedPG::finish_ctx(OpContext *ctx, int log_op_type, bool maintain_ssc
 	  ctx->at_version.version++;
 
 	  ctx->snapset_obc->obs.exists = false;
+          if (!bss.length()) {
+            ctx->modify_snapset = true;
+            ::encode(ctx->new_snapset, bss); 
+          } 
 	}
       }
     } else if (ctx->new_snapset.clones.size()) {
@@ -5173,11 +5239,18 @@ void ReplicatedPG::finish_ctx(OpContext *ctx, int log_op_type, bool maintain_ssc
       ctx->snapset_obc->obs.oi.last_reqid = ctx->reqid;
       ctx->snapset_obc->obs.oi.mtime = ctx->mtime;
 
+      if (!bss.length()) {
+        ctx->modify_snapset = true;
+        ::encode(ctx->new_snapset, bss); 
+      }
+
       bufferlist bv(sizeof(ctx->new_obs.oi));
       ::encode(ctx->snapset_obc->obs.oi, bv);
       ctx->op_t->touch(snapoid);
       setattr_maybe_cache(ctx->snapset_obc, ctx, ctx->op_t, OI_ATTR, bv);
-      setattr_maybe_cache(ctx->snapset_obc, ctx, ctx->op_t, SS_ATTR, bss);
+      if (bss.length()) {
+        setattr_maybe_cache(ctx->snapset_obc, ctx, ctx->op_t, SS_ATTR, bss);
+      }
       if (pool.info.require_rollback()) {
 	map<string, boost::optional<bufferlist> > to_set;
 	to_set[SS_ATTR];
@@ -5223,7 +5296,9 @@ void ReplicatedPG::finish_ctx(OpContext *ctx, int log_op_type, bool maintain_ssc
     if (soid.snap == CEPH_NOSNAP) {
       dout(10) << " final snapset " << ctx->new_snapset
 	       << " in " << soid << dendl;
-      setattr_maybe_cache(ctx->obc, ctx, ctx->op_t, SS_ATTR, bss);
+      if (bss.length()) {
+        setattr_maybe_cache(ctx->obc, ctx, ctx->op_t, SS_ATTR, bss);
+      }
 
       if (pool.info.require_rollback()) {
 	set<string> changing;
@@ -5889,6 +5964,7 @@ void ReplicatedPG::finish_promote(int r, OpRequestRef op,
     tctx->lock_to_release = OpContext::W_LOCK;
     dout(20) << __func__ << " took lock on obc, " << obc->rwstate << dendl;
 
+    tctx->modify_snapset = true;
     finish_ctx(tctx, pg_log_entry_t::PROMOTE);
 
     simple_repop_submit(repop);
@@ -5997,6 +6073,7 @@ void ReplicatedPG::finish_promote(int r, OpRequestRef op,
   tctx->lock_to_release = OpContext::W_LOCK;
   dout(20) << __func__ << " took lock on obc, " << obc->rwstate << dendl;
 
+  tctx->modify_snapset = true;
   finish_ctx(tctx, pg_log_entry_t::PROMOTE);
 
   simple_repop_submit(repop);
@@ -6381,6 +6458,7 @@ int ReplicatedPG::try_flush_mark_clean(FlushOpRef fop)
   ctx->new_obs.oi.clear_flag(object_info_t::FLAG_DIRTY);
   --ctx->delta_stats.num_objects_dirty;
 
+  ctx->modify_snapset = true;
   finish_ctx(ctx, pg_log_entry_t::CLEAN);
 
   osd->logger->inc(l_osd_tier_clean);
@@ -6785,6 +6863,7 @@ void ReplicatedBackend::issue_op(
       false, acks_wanted,
       get_osdmap()->get_epoch(),
       tid, at_version);
+    wr->set_priority(CEPH_MSG_PRIO_HIGH);
 
     // ship resulting transaction, log entries, and pg_stats
     if (!parent->should_send_op(peer, soid)) {
@@ -7063,11 +7142,14 @@ ObjectContextRef ReplicatedPG::get_object_context(const hobject_t& soid,
     (pg_log.get_log().objects.count(soid) &&
       pg_log.get_log().objects.find(soid)->second->op ==
       pg_log_entry_t::LOST_REVERT));
+  osd->logger->inc(l_osd_object_ctx_cache_total);
   ObjectContextRef obc = object_contexts.lookup(soid);
   if (obc) {
+    osd->logger->inc(l_osd_object_ctx_cache_hit);
     dout(10) << __func__ << ": found obc in cache: " << obc
 	     << dendl;
   } else {
+    dout(10) << __func__ << ": obc NOT found in cache: " << soid << dendl;
     // check disk
     bufferlist bv;
     if (attrs) {
@@ -9278,9 +9360,9 @@ void ReplicatedPG::on_flushed()
   if (!is_active() || !is_primary()) {
     pair<hobject_t, ObjectContextRef> i;
     while (object_contexts.get_next(i.first, &i)) {
-      derr << "on_flushed: object " << i.first << " obc still alive" << dendl;
+      dout(10) << "on_flushed: object " << i.first << " obc still alive" << dendl;
     }
-    assert(object_contexts.empty());
+  //  assert(object_contexts.empty());
   }
   pgbackend->on_flushed();
 }
@@ -9295,6 +9377,11 @@ void ReplicatedPG::on_removal(ObjectStore::Transaction *t)
   write_if_dirty(*t);
 
   on_shutdown();
+}
+
+void ReplicatedPG::print_msg(stringstream& ss)
+{
+  dout(10) << ss.str() << dendl; 
 }
 
 void ReplicatedPG::on_shutdown()
@@ -9467,6 +9554,9 @@ void ReplicatedPG::on_pool_change()
   dout(10) << __func__ << dendl;
   hit_set_setup();
   agent_setup();
+  if (get_role() !=0) {
+    object_contexts.clear();
+  }
 }
 
 // clear state.  called on recovery completion AND cancellation.
@@ -11237,9 +11327,9 @@ bool ReplicatedPG::agent_maybe_flush(ObjectContextRef& obc)
 
   utime_t now = ceph_clock_now(NULL);
   if (obc->obs.oi.mtime + utime_t(pool.info.cache_min_flush_age, 0) > now) {
-    dout(20) << __func__ << " skip (too young) " << obc->obs.oi << dendl;
+    dout(20) << __func__ << " skip (too young)  " << obc->obs.oi << ", mtime " << obc->obs.oi.mtime << " flush_age " << pool.info.cache_min_flush_age << " now " << now  << dendl;
     osd->logger->inc(l_osd_agent_skip);
-    return false;
+    //return false;
   }
 
   if (osd->agent_is_active_oid(obc->obs.oi.soid)) {
@@ -11312,8 +11402,8 @@ bool ReplicatedPG::agent_maybe_evict(ObjectContextRef& obc)
     agent_state->temp_hist.get_position_micro(temp, &temp_lower, &temp_upper);
     */
 
-    dout(20) << __func__
-	     << " atime " << atime
+    dout(5) << __func__
+	     << " atime " << atime << " mtime " << obc->obs.oi.mtime
 	     << " pos " << atime_lower << "-" << atime_upper
 	     << ", temp " << temp
 	     << " pos " << temp_lower << "-" << temp_upper
@@ -11344,6 +11434,7 @@ bool ReplicatedPG::agent_maybe_evict(ObjectContextRef& obc)
   if (obc->obs.oi.is_omap())
     ctx->delta_stats.num_objects_omap--;
   assert(r == 0);
+  ctx->modify_snapset = true;
   finish_ctx(ctx, pg_log_entry_t::DELETE, false);
   simple_repop_submit(repop);
   osd->logger->inc(l_osd_tier_evict);
@@ -11421,7 +11512,8 @@ void ReplicatedPG::agent_choose_mode(bool restart)
       num_dirty = 0;
   }
 
-  dout(10) << __func__ << ": "
+  dout(0) << __func__ << ": "
+	   << " divisor: " << divisor
 	   << " num_objects: " << info.stats.stats.sum.num_objects
 	   << " num_bytes: " << info.stats.stats.sum.num_bytes
 	   << " num_objects_dirty: " << info.stats.stats.sum.num_objects_dirty
@@ -11435,9 +11527,11 @@ void ReplicatedPG::agent_choose_mode(bool restart)
   // get dirty, full ratios
   uint64_t dirty_micro = 0;
   uint64_t full_micro = 0;
-  if (pool.info.target_max_bytes && info.stats.stats.sum.num_objects) {
+  if (pool.info.target_max_bytes && info.stats.stats.sum.num_objects && num_user_objects) {
+//    uint64_t avg_size = info.stats.stats.sum.num_bytes /
+//      info.stats.stats.sum.num_objects;
     uint64_t avg_size = info.stats.stats.sum.num_bytes /
-      info.stats.stats.sum.num_objects;
+      (num_user_objects + info.stats.stats.sum.num_objects_omap);
     dirty_micro =
       num_dirty * avg_size * 1000000 /
       MAX(pool.info.target_max_bytes / divisor, 1);
@@ -11457,9 +11551,6 @@ void ReplicatedPG::agent_choose_mode(bool restart)
     if (full_objects_micro > full_micro)
       full_micro = full_objects_micro;
   }
-  dout(20) << __func__ << " dirty " << ((float)dirty_micro / 1000000.0)
-	   << " full " << ((float)full_micro / 1000000.0)
-	   << dendl;
 
   // flush mode
   TierAgentState::flush_mode_t flush_mode = TierAgentState::FLUSH_MODE_IDLE;
@@ -11487,6 +11578,10 @@ void ReplicatedPG::agent_choose_mode(bool restart)
   else
     evict_target -= MIN(evict_target, evict_slop);
 
+  dout(20) << __func__ << " dirty " << ((float)dirty_micro / 1000000.0) << " flush_target " << ((float)flush_target / 1000000.0)
+	   << " full " << ((float)full_micro / 1000000.0) << " evict_target " <<((float)evict_target / 1000000.0)
+	   << dendl;
+
   if (info.stats.stats_invalid) {
     // idle; stats can't be trusted until we scrub.
   } else if (full_micro > 1000000) {
@@ -11513,12 +11608,12 @@ void ReplicatedPG::agent_choose_mode(bool restart)
     if (evict_effort < inc)
       evict_effort = inc;
     assert(evict_effort >= inc && evict_effort <= 1000000);
-    dout(30) << __func__ << " evict_effort " << was << " quantized by " << inc << " to " << evict_effort << dendl;
+    dout(0) << __func__ << " evict_effort " << was << " quantized by " << inc << " to " << evict_effort << dendl;
   }
 
   bool old_idle = agent_state->is_idle();
   if (flush_mode != agent_state->flush_mode) {
-    dout(5) << __func__ << " flush_mode "
+    dout(0) << __func__ << " flush_mode "
 	    << TierAgentState::get_flush_mode_name(agent_state->flush_mode)
 	    << " -> "
 	    << TierAgentState::get_flush_mode_name(flush_mode)
@@ -11526,7 +11621,7 @@ void ReplicatedPG::agent_choose_mode(bool restart)
     agent_state->flush_mode = flush_mode;
   }
   if (evict_mode != agent_state->evict_mode) {
-    dout(5) << __func__ << " evict_mode "
+    dout(0) << __func__ << " evict_mode "
 	    << TierAgentState::get_evict_mode_name(agent_state->evict_mode)
 	    << " -> "
 	    << TierAgentState::get_evict_mode_name(evict_mode)
@@ -11538,7 +11633,7 @@ void ReplicatedPG::agent_choose_mode(bool restart)
   }
   uint64_t old_effort = agent_state->evict_effort;
   if (evict_effort != agent_state->evict_effort) {
-    dout(5) << __func__ << " evict_effort "
+    dout(0) << __func__ << " evict_effort "
 	    << ((float)agent_state->evict_effort / 1000000.0)
 	    << " -> "
 	    << ((float)evict_effort / 1000000.0)
@@ -12090,6 +12185,9 @@ void ReplicatedPG::setattr_maybe_cache(
   const string &key,
   bufferlist &val)
 {
+  stringstream ss;
+  ss << __func__ << " oi " << obc->obs.oi;
+  print_msg(ss);
   if (pool.info.require_rollback()) {
     op->pending_attrs[obc][key] = val;
   }

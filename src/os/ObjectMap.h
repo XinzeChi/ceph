@@ -20,6 +20,8 @@
 #include <string>
 #include <vector>
 #include "include/memory.h"
+#include "include/unordered_map.h"
+#include "include/unordered_set.h"
 
 /**
  * Encapsulates the FileStore key value store
@@ -34,6 +36,12 @@ public:
     const map<string, bufferlist> &set,  ///< [in] key to value map to set
     const SequencerPosition *spos=0     ///< [in] sequencer position
     ) = 0;
+
+  virtual int set_keys(
+    const ghobject_t &oid,              ///< [in] object containing map
+    const unordered_map<string, bufferlist> &set,  ///< [in] key to value map to set
+    const SequencerPosition *spos=0     ///< [in] sequencer position
+    ) = 0; 
 
   /// Set header
   virtual int set_header(
@@ -58,6 +66,12 @@ public:
   virtual int rm_keys(
     const ghobject_t &oid,              ///< [in] object containing map
     const set<string> &to_clear,        ///< [in] Keys to clear
+    const SequencerPosition *spos=0     ///< [in] sequencer position
+    ) = 0;
+
+  virtual int rm_keys(
+    const ghobject_t &oid,              ///< [in] object containing map
+    const unordered_set<string> &to_clear,        ///< [in] Keys to clear
     const SequencerPosition *spos=0     ///< [in] sequencer position
     ) = 0;
 
