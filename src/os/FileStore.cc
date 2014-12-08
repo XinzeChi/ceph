@@ -438,7 +438,6 @@ FileStore::FileStore(const std::string &base, const std::string &jdev, const cha
   fdcache(g_ceph_context),
   dbcache_lock("FileStore::dbcache_lock"),
   dbache_transaction_lock("FileStore::dbache_transaction_lock"),
-  dbcache_flush(false),
   dbcache_items(0),
   wbthrottle(g_ceph_context),
   default_osr("default"),
@@ -2239,7 +2238,8 @@ bool FileStore::insert_dbcache(coll_t cid, ghobject_t &hoid, map<string, bufferl
     tmp.swap(ls);
     dbache_transaction_lock.Lock();
     dbcache_lock.Unlock();
-    _omap_setkeys(cid, hoid, tmp, SequencerPosition(), true);
+    int r = _omap_setkeys(cid, hoid, tmp, SequencerPosition(), true);
+    _omap_flush_result_handle(r, Transaction::OP_OMAP_SETKEYS);
     dbache_transaction_lock.Unlock();
     dbcache_lock.Lock();
     flush_items = tmp.size();
@@ -2248,7 +2248,7 @@ bool FileStore::insert_dbcache(coll_t cid, ghobject_t &hoid, map<string, bufferl
   if (!m_dbcache_full && dbcache_items > m_filestore_dbcache_commit_max) {
     m_dbcache_full = true;
     utime_t start1 = ceph_clock_now(g_ceph_context);
-    dbcache_to_omap();
+    start_sync();
     utime_t end1 = ceph_clock_now(g_ceph_context);
     dout(15) << "start_sync total used " << (end1 - start1) << dendl;
   }
@@ -2285,7 +2285,8 @@ bool FileStore::insert_dbcache(coll_t cid, ghobject_t &hoid, set<string> &keys)
     tmp.swap(ls);
     dbache_transaction_lock.Lock();
     dbcache_lock.Unlock();
-    _omap_rmkeys(cid, hoid, tmp, SequencerPosition(), true);
+    int r = _omap_rmkeys(cid, hoid, tmp, SequencerPosition(), true);
+    _omap_flush_result_handle(r, Transaction::OP_OMAP_RMKEYS);
     dbache_transaction_lock.Unlock();
     dbcache_lock.Lock();
     flush_items = tmp.size();
@@ -2294,7 +2295,7 @@ bool FileStore::insert_dbcache(coll_t cid, ghobject_t &hoid, set<string> &keys)
   if (!m_dbcache_full && dbcache_items > m_filestore_dbcache_commit_max) {
     m_dbcache_full = true;
     utime_t start1 = ceph_clock_now(g_ceph_context);
-    dbcache_to_omap();
+    start_sync();
     utime_t end1 = ceph_clock_now(g_ceph_context);
     dout(15) << "start_sync total used " << (end1 - start1) << dendl;
   }
@@ -2335,13 +2336,15 @@ bool FileStore::flush_dbcache()
 
   for (dbcache_setkeys::iterator itt = setkeys.begin(); itt != setkeys.end(); itt++) {
     for (unordered_map<ghobject_t, unordered_map<string, bufferlist> >::iterator it = itt->second.begin(); it != itt->second.end(); it++) {
-      _omap_setkeys(itt->first, it->first, it->second, SequencerPosition(), true);
+     int r =  _omap_setkeys(itt->first, it->first, it->second, SequencerPosition(), true);
+     _omap_flush_result_handle(r, Transaction::OP_OMAP_SETKEYS);
     }
   }
 
   for (dbcache_rmkeys::iterator itt = rmkeys.begin(); itt != rmkeys.end(); itt++) {
     for (unordered_map<ghobject_t, unordered_set<string> >::iterator it = itt->second.begin(); it != itt->second.end(); it++) {
-      _omap_rmkeys(itt->first, it->first, it->second, SequencerPosition(), true);
+      int r = _omap_rmkeys(itt->first, it->first, it->second, SequencerPosition(), true);
+      _omap_flush_result_handle(r, Transaction::OP_OMAP_RMKEYS);
     }
   }
   dbache_transaction_lock.Unlock();
@@ -2350,16 +2353,53 @@ bool FileStore::flush_dbcache()
   return true;
 }
 
-void FileStore::dbcache_to_omap()
+bool FileStore::_omap_flush_result_handle(int r, int op)
 {
-//  Mutex::Locker l(lock);
-//  dbcache_flush = true;
-//  sync_cond.Signal();
-  start_sync();
-}
+  if (r < 0) {
+    bool ok = false;
 
-bool _do_transaction_result_handle(int r, int op)
-{
+    if (r == -ENOENT && !(op == Transaction::OP_CLONERANGE ||
+      		    op == Transaction::OP_CLONE ||
+      		    op == Transaction::OP_CLONERANGE2 ||
+      		    op == Transaction::OP_COLL_ADD))
+      // -ENOENT is normally okay
+      // ...including on a replayed OP_RMCOLL with checkpoint mode
+      ok = true;
+    if (r == -ENODATA)
+      ok = true;
+
+    if (replaying && !backend->can_checkpoint()) {
+	if (r == -ERANGE) {
+	  dout(10) << "tolerating ERANGE on replay" << dendl;
+	  ok = true;
+	}
+	if (r == -ENOENT) {
+	  dout(10) << "tolerating ENOENT on replay" << dendl;
+	  ok = true;
+	}
+      }
+
+    if (!ok) {
+	const char *msg = "unexpected error code";
+
+	if (r == -ENOSPC)
+	  // For now, if we hit _any_ ENOSPC, crash, before we do any damage
+	  // by partially applying transactions.
+	  msg = "ENOSPC handling not implemented";
+
+	if (r == -ENOTEMPTY) {
+	  msg = "ENOTEMPTY suggests garbage data in osd data dir";
+	}
+
+	dout(0) << " error " << cpp_strerror(r) << " not handled on operation " << op << dendl;
+	dout(0) << msg << dendl;
+	assert(0 == "unexpected error");
+
+	if (r == -EMFILE) {
+	  dump_open_fds(g_ceph_context);
+	}
+    }
+  }
   return true;
 }
 
@@ -3373,7 +3413,6 @@ void FileStore::sync_entry()
       dout(20) << "sync_entry not waiting, force_sync set" << dendl;
     }
 
-    bool force = force_sync;
     if (force_sync) {
       dout(20) << "sync_entry force_sync set" << dendl;
       force_sync = false;
@@ -3392,16 +3431,7 @@ void FileStore::sync_entry()
     }
     static utime_t last_sync = ceph_clock_now(g_ceph_context);
 
-    if (dbcache_flush) {
-      dbcache_flush = false;
-      flush_dbcache();
-      utime_t interval = ceph_clock_now(g_ceph_context) - last_sync;
-      if (!force && interval.to_nsec() / 1000000000 < max_interval) {
-        continue;
-      }
-    } else {
-      flush_dbcache();
-    }
+    flush_dbcache();
 
     list<Context*> fin;
   again:

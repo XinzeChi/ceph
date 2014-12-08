@@ -264,7 +264,6 @@ private:
   FDCache fdcache;
   Mutex dbcache_lock;
   Mutex dbache_transaction_lock;
-  bool dbcache_flush;
   uint32_t dbcache_items;
   typedef unordered_map<coll_t, unordered_map<ghobject_t, unordered_map<string, bufferlist> > > dbcache_setkeys;
   typedef unordered_map<coll_t, unordered_map<ghobject_t, unordered_set<string> > > dbcache_rmkeys;
@@ -273,7 +272,7 @@ private:
   bool insert_dbcache(coll_t cid, ghobject_t &hoid, map<string, bufferlist> &aset);
   bool insert_dbcache(coll_t cid, ghobject_t &hoid, set<string> &keys);
   bool flush_dbcache();
-  void dbcache_to_omap();
+  bool _omap_flush_result_handle(int r, int op);
 
   WBThrottle wbthrottle;
 
