@@ -1508,10 +1508,11 @@ void FileJournal::submit_entry(uint64_t seq, bufferlist& e, int alignment,
 	seq, oncommit, ceph_clock_now(g_ceph_context), osd_op));
 
     utime_t time2 = ceph_clock_now(g_ceph_context);
+    if (writeq.empty())
+      writeq_cond.Signal();
     writeq.push_back(write_item(seq, e, alignment, osd_op));
     static uint64_t write_num = 0;
     write_num++;
-    writeq_cond.Signal();
 
     utime_t end = ceph_clock_now(g_ceph_context);
     utime_t used = end - start;
