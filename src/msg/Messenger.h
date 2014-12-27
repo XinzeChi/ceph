@@ -140,6 +140,7 @@ public:
   }
   virtual ~Messenger() {}
 
+  static void init();
   /**
    * create a new messenger
    *
