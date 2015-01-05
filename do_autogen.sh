@@ -17,6 +17,7 @@ do_autogen.sh: make a ceph build by running autogen, etc.
 -O <level>                       optimize
 -n                               use libnss
 -j                               with java
+-J                               --with-jemalloc
 
 EOF
 }
@@ -30,7 +31,7 @@ debug_level=0
 verbose=0
 profile=0
 CONFIGURE_FLAGS=""
-while getopts  "d:e:hHTPjpnvO:" flag
+while getopts  "d:e:hHTPJjpnvO:" flag
 do
     case $flag in
     d) debug_level=$OPTARG;;
@@ -52,6 +53,8 @@ do
     v) verbose=1;;
 
     e) encode_dump=$OPTARG;;
+
+    J) CONFIGURE_FLAGS="$CONFIGURE_FLAGS --with-jemalloc";;
 
     *)
         echo

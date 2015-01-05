@@ -358,6 +358,30 @@ AS_IF([test "x$with_tcmalloc" != xno],
 		  [no tcmalloc found (use --without-tcmalloc to disable)])])])
 AM_CONDITIONAL(WITH_TCMALLOC, [test "$HAVE_LIBTCMALLOC" = "1"])
 
+# jemalloc?
+AC_ARG_WITH([jemalloc],
+       [AS_HELP_STRING([--with-jemalloc], [enable jemalloc for memory allocations])],
+       [],
+       [with_jemalloc=no])
+JEMALLOC=
+AS_IF([test "x$with_jemalloc" = xyes],
+       [AC_CHECK_LIB([jemalloc], [malloc],
+        [AC_SUBST([LIBJEMALLOC], ["-ljemalloc"])
+          AC_DEFINE([HAVE_LIBJEMALLOC], [1],
+                         [Define if you have jemalloc])
+          HAVE_LIBJEMALLOC=1
+        ],
+       [AC_MSG_FAILURE(
+         [no jemalloc found (do not use --with-jemalloc)])])])
+AM_CONDITIONAL(WITH_JEMALLOC, [test "$HAVE_LIBJEMALLOC" = "1"])
+
+# error out if --with-jemalloc and ! --without-tcmalloc
+if test "x$with_jemalloc" = "xyes"; then
+   if test "x$with_tcmalloc" != "xno"; then
+       AC_MSG_FAILURE([--with-jemalloc called without --without-tcmalloc])
+   fi
+fi
+
 #set pg ref debugging?
 AC_ARG_ENABLE([pgrefdebugging],
 	    [AS_HELP_STRING([--enable-pgrefdebugging], [enable pg ref debugging])],
