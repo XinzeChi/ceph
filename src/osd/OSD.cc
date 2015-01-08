@@ -5145,6 +5145,31 @@ bool OSD::scrub_random_backoff()
 
 bool OSD::scrub_should_schedule()
 {
+  utime_t now = ceph_clock_now(cct);
+  struct tm bdt;
+  time_t tt = now.sec();
+  localtime_r(&tt, &bdt);
+  bool time_permit = false;
+  if (cct->_conf->osd_scrub_begin_hour < cct->_conf->osd_scrub_end_hour) {
+    if (bdt.tm_hour >= cct->_conf->osd_scrub_begin_hour && bdt.tm_hour < cct->_conf->osd_scrub_end_hour) {
+      time_permit = true;
+    }
+  } else {
+    if (bdt.tm_hour >= cct->_conf->osd_scrub_begin_hour || bdt.tm_hour < cct->_conf->osd_scrub_end_hour) {
+      time_permit = true;
+    }
+  }
+  if (!time_permit) {
+    dout(20) << "scrub_should_schedule should run between " << cct->_conf->osd_scrub_begin_hour
+	     << " - " << cct->_conf->osd_scrub_end_hour
+	     << ", now " << bdt.tm_hour << " = no" << dendl;
+    return false;
+  } else {
+    dout(20) << "scrub_should_schedule should run between " << cct->_conf->osd_scrub_begin_hour
+	     << " - " << cct->_conf->osd_scrub_end_hour
+	     << ", now " << bdt.tm_hour << " = yes" << dendl;
+  }
+
   double loadavgs[1];
   if (getloadavg(loadavgs, 1) != 1) {
     dout(10) << "scrub_should_schedule couldn't read loadavgs\n" << dendl;
