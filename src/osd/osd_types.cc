@@ -4071,7 +4071,7 @@ void PushOp::generate_test_instances(list<PushOp*> &o)
 
 void PushOp::encode(bufferlist &bl) const
 {
-  ENCODE_START(1, 1, bl);
+  ENCODE_START(2, 2, bl);
   ::encode(soid, bl);
   ::encode(version, bl);
   ::encode(data, bl);
@@ -4082,12 +4082,15 @@ void PushOp::encode(bufferlist &bl) const
   ::encode(recovery_info, bl);
   ::encode(after_progress, bl);
   ::encode(before_progress, bl);
+  ::encode(compression, bl);
+  ::encode(src_len, bl);
+  ::encode(src_data_crc, bl);
   ENCODE_FINISH(bl);
 }
 
 void PushOp::decode(bufferlist::iterator &bl)
 {
-  DECODE_START(1, bl);
+  DECODE_START(2, bl);
   ::decode(soid, bl);
   ::decode(version, bl);
   ::decode(data, bl);
@@ -4098,6 +4101,9 @@ void PushOp::decode(bufferlist::iterator &bl)
   ::decode(recovery_info, bl);
   ::decode(after_progress, bl);
   ::decode(before_progress, bl);
+  ::decode(compression, bl);
+  ::decode(src_len, bl);
+  ::decode(src_data_crc, bl);
   DECODE_FINISH(bl);
 }
 
@@ -4125,6 +4131,9 @@ void PushOp::dump(Formatter *f) const
     before_progress.dump(f);
     f->close_section();
   }
+  f->dump_bool("compression", compression);
+  f->dump_int("src_len", src_len);
+  f->dump_int("src_data_crc", src_data_crc);
 }
 
 ostream &PushOp::print(ostream &out) const
@@ -4140,6 +4149,9 @@ ostream &PushOp::print(ostream &out) const
     << ", recovery_info: " << recovery_info
     << ", after_progress: " << after_progress
     << ", before_progress: " << before_progress
+    << ", compression: " << compression
+    << ", src_len: " << src_len
+    << ", src_data_crc: " << src_data_crc
     << ")";
 }
 

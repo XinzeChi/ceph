@@ -459,6 +459,7 @@ OPTION(osd_op_pq_max_tokens_per_priority, OPT_U64, 4194304)
 OPTION(osd_op_pq_min_cost, OPT_U64, 65536)
 OPTION(osd_disk_threads, OPT_INT, 1)
 OPTION(osd_recovery_threads, OPT_INT, 1)
+OPTION(osd_recovery_data_compression, OPT_BOOL, true)
 OPTION(osd_recover_clone_overlap, OPT_BOOL, true)   // preserve clone_overlap during recovery/migration
 
 // Only use clone_overlap for recovery if there are fewer than
@@ -666,6 +667,7 @@ OPTION(filestore_xfs_extsize, OPT_BOOL, false)
 OPTION(filestore_journal_parallel, OPT_BOOL, false)
 OPTION(filestore_journal_writeahead, OPT_BOOL, false)
 OPTION(filestore_journal_trailing, OPT_BOOL, false)
+OPTION(filestore_journal_compression_min, OPT_U32, 1 << 20)
 OPTION(filestore_queue_max_ops, OPT_INT, 50)
 OPTION(filestore_queue_max_bytes, OPT_INT, 100 << 20)
 OPTION(filestore_queue_committing_max_ops, OPT_INT, 500)        // this is ON TOP of filestore_queue_max_*

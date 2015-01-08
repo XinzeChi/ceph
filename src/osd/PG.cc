@@ -2078,6 +2078,7 @@ void PG::clear_recovery_state()
 #ifdef DEBUG_RECOVERY_OIDS
     soid = *recovering_oids.begin();
 #endif
+    dout(10) << __func__ << " recovery_ops_active " << recovery_ops_active << dendl;
     finish_recovery_op(soid, true);
   }
 

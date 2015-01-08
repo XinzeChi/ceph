@@ -863,6 +863,17 @@ int FileJournal::prepare_single_write(bufferlist& bl, off64_t& queue_pos, uint64
   uint64_t seq = next_write.seq;
   bufferlist &ebl = next_write.bl;
   unsigned head_size = sizeof(entry_header_t);
+  //off64_t base_size = 2*head_size + ebl.length();
+  entry_header_t h;
+
+  if (ebl.length() > g_conf->filestore_journal_compression_min) {
+    bufferlist cebl;
+    h.orig_length = ebl.length();
+    ebl.compress(buffer::ALG_LZ4, cebl);
+    ebl.swap(cebl);
+  } else {
+    h.orig_length = 0;
+  }
   off64_t base_size = 2*head_size + ebl.length();
 
   int alignment = next_write.alignment; // we want to start ebl with this alignment
@@ -888,8 +899,9 @@ int FileJournal::prepare_single_write(bufferlist& bl, off64_t& queue_pos, uint64
 	   << dendl;
     
   // add it this entry
-  entry_header_t h;
+  // entry_header_t h;
   memset(&h, 0, sizeof(h));
+  h.version = 1;
   h.seq = seq;
   h.pre_pad = pre_pad;
   h.len = ebl.length();
@@ -1858,6 +1870,12 @@ FileJournal::read_entry_result FileJournal::do_read_entry(
 
   if (_h)
     *_h = *h;
+  
+  if(h->orig_length) {
+    bufferlist dbl;
+    bl->decompress(buffer::ALG_LZ4, dbl, h->orig_length);
+    bl->swap(dbl);
+  }
 
   assert(pos % header.alignment == 0);
   return SUCCESS;

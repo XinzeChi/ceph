@@ -2318,6 +2318,9 @@ bool FileStore::insert_dbcache(coll_t cid, ghobject_t &hoid, set<string> &keys)
 
 bool FileStore::flush_dbcache()
 {
+  if (!m_dbcache_commit) {
+    return true;
+  }
   dout(10) << __func__  << dendl;
   utime_t start = ceph_clock_now(g_ceph_context);
   dbcache_lock.Lock();

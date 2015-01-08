@@ -196,13 +196,15 @@ public:
   } header;
 
   struct entry_header_t {
+    uint32_t version;
     uint64_t seq;     // fs op seq #
     uint32_t crc32c;  // payload only.  not header, pre_pad, post_pad, or footer.
     uint32_t len;
     uint32_t pre_pad, post_pad;
     uint64_t magic1;
     uint64_t magic2;
-    
+    uint32_t orig_length;
+
     void make_magic(off64_t pos, uint64_t fsid) {
       magic1 = pos;
       magic2 = fsid ^ seq ^ len;
