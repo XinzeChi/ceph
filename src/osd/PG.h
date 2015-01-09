@@ -953,6 +953,9 @@ public:
     {
     }
 
+    uint32_t last_scrub_num_objects;
+    uint32_t last_scrub_num_bytes;
+    utime_t last_scrub_stamp;
     // metadata
     set<pg_shard_t> reserved_peers;
     bool reserved, reserve_failed;

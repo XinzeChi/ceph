@@ -3098,7 +3098,7 @@ void PG::_request_scrub_map(
   bool deep)
 {
   assert(replica != pg_whoami);
-  dout(10) << "scrub  requesting scrubmap from osd." << replica << dendl;
+  dout(10) << "scrub  requesting scrubmap from osd." << replica << (deep ? " deeply" : "") << dendl;
   MOSDRepScrub *repscrubop = new MOSDRepScrub(
     spg_t(info.pgid.pgid, replica.shard), version,
     get_osdmap()->get_epoch(),
@@ -3622,7 +3622,7 @@ void PG::scrub(ThreadPool::TPHandle &handle)
       state_clear(PG_STATE_DEEP_SCRUB);
     }
 
-    dout(10) << "starting a new " << (scrubber.is_chunky ? "chunky" : "classic") << " scrub" << dendl;
+    dout(10) << "starting a new " << (scrubber.is_chunky ? "chunky" : "classic") << " scrub" << (scrubber.deep ? " deeply" : "") << dendl;
   }
 
   if (scrubber.is_chunky) {
@@ -3878,6 +3878,21 @@ void PG::chunky_scrub(ThreadPool::TPHandle &handle)
         break;
 
       case PG::Scrubber::NEW_CHUNK:
+        if (scrubber.deep && cct->_conf->osd_deep_scrub_rate_max) {
+          double interval = 1.0 * (ceph_clock_now(cct).to_nsec() - scrubber.last_scrub_stamp.to_nsec()) / 1000000;
+          double ratio = 1.0 * scrubber.last_scrub_num_bytes / (cct->_conf->osd_deep_scrub_rate_max * cct->_conf->osd_max_scrubs);
+          dout(20) << __func__ << " last_scrub_num_bytes " << scrubber.last_scrub_num_bytes << " osd_deep_scrub_rate_max "
+                   << cct->_conf->osd_deep_scrub_rate_max << " ratio " << ratio << " interval " << interval << dendl;
+          double wait_secs = ratio - interval / 1000;
+          if (wait_secs > 0) {
+            sleep((uint32_t)wait_secs);
+            usleep((uint32_t)((wait_secs - (uint32_t)wait_secs) * 1000000));
+          } else {
+            wait_secs = 0;
+          }
+          dout(20) << __func__ << " wait " << wait_secs << " secs finish" << dendl;
+        }
+
         scrubber.primary_scrubmap = ScrubMap();
         scrubber.received_maps.clear();
 
@@ -3893,6 +3908,7 @@ void PG::chunky_scrub(ThreadPool::TPHandle &handle)
 
           bool boundary_found = false;
           hobject_t start = scrubber.start;
+          uint32_t scrub_objects = 0;
           while (!boundary_found) {
             vector<hobject_t> objects;
             ret = get_pgbackend()->objects_list_partial(
@@ -3923,6 +3939,7 @@ void PG::chunky_scrub(ThreadPool::TPHandle &handle)
                 boundary_found = true;
               }
             }
+            scrub_objects = objects.size();
           }
 
 	  if (!_range_available_for_scrub(scrubber.start, candidate_end)) {
@@ -3934,6 +3951,16 @@ void PG::chunky_scrub(ThreadPool::TPHandle &handle)
 	    break;
 	  }
 	  scrubber.end = candidate_end;
+
+          scrubber.last_scrub_stamp = ceph_clock_now(cct);
+          scrubber.last_scrub_num_objects = scrub_objects;
+          if (info.stats.stats.sum.num_objects) {
+            scrubber.last_scrub_num_bytes = info.stats.stats.sum.num_bytes *
+                             scrub_objects / info.stats.stats.sum.num_objects;
+          } else {
+            scrubber.last_scrub_num_bytes = 0;
+          }
+
         }
         scrubber.block_writes = true;
 

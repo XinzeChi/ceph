@@ -507,6 +507,7 @@ OPTION(osd_recovery_forget_lost_objects, OPT_BOOL, false)   // off for now
 OPTION(osd_max_scrubs, OPT_INT, 1)
 OPTION(osd_scrub_begin_hour, OPT_INT, 0)
 OPTION(osd_scrub_end_hour, OPT_INT, 24)
+OPTION(osd_deep_scrub_rate_max, OPT_U64, 100 << 20) // limit deep_scrub rate 100MB/s, 0 unlimited
 OPTION(osd_scrub_load_threshold, OPT_FLOAT, 0.5)
 OPTION(osd_scrub_min_interval, OPT_FLOAT, 60*60*24)    // if load is low
 OPTION(osd_scrub_max_interval, OPT_FLOAT, 7*60*60*24)  // regardless of load
