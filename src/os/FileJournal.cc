@@ -866,7 +866,7 @@ int FileJournal::prepare_single_write(bufferlist& bl, off64_t& queue_pos, uint64
   //off64_t base_size = 2*head_size + ebl.length();
   entry_header_t h;
 
-  if (ebl.length() > g_conf->filestore_journal_compression_min) {
+  if (ebl.length() > g_conf->filestore_journal_compression_min && g_conf->filestore_journal_compression) {
     bufferlist cebl;
     h.orig_length = ebl.length();
     ebl.compress(buffer::ALG_LZ4, cebl);
