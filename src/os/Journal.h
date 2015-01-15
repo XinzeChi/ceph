@@ -71,6 +71,7 @@ public:
 
   virtual bool should_commit_now() = 0;
 
+  virtual bool write_header() { return true; }
   // reads/recovery
   
 };

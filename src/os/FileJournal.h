@@ -99,6 +99,7 @@ public:
   struct header_t {
     enum {
       FLAG_CRC = (1<<0),
+      FLAG_COMPRESSION = (1<<1),
       // NOTE: remove kludgey weirdness in read_header() next time a flag is added.
     };
 
@@ -194,6 +195,27 @@ public:
 	start_seq = 0;
     }
   } header;
+
+  struct entry_header_t_old {
+    uint64_t seq;     // fs op seq #
+    uint32_t crc32c;  // payload only.  not header, pre_pad, post_pad, or footer.
+    uint32_t len;
+    uint32_t pre_pad, post_pad;
+    uint64_t magic1;
+    uint64_t magic2;
+    uint32_t orig_length;
+
+    void make_magic(off64_t pos, uint64_t fsid) {
+      magic1 = pos;
+      magic2 = fsid ^ seq ^ len;
+    }
+    bool check_magic(off64_t pos, uint64_t fsid) {
+      return
+	magic1 == (uint64_t)pos &&
+	magic2 == (fsid ^ seq ^ len);
+    }
+  } __attribute__((__packed__, aligned(4)));
+
 
   struct entry_header_t {
     uint32_t version;
@@ -300,6 +322,7 @@ private:
   void print_header();
   int read_header();
   bufferptr prepare_header();
+  bool write_header();
   void start_writer();
   void stop_writer();
   void write_thread_entry();
@@ -445,6 +468,16 @@ private:
     entry_header_t *h = 0 ///< [out] header
     ); ///< @return result code
 
+  read_entry_result do_read_entry_old(
+    off64_t pos,          ///< [in] position to read
+    off64_t *next_pos,    ///< [out] next position to read
+    bufferlist* bl,       ///< [out] payload for successful read
+    uint64_t *seq,        ///< [out] seq of successful read
+    ostream *ss,          ///< [out] error output
+    entry_header_t_old *h = 0 ///< [out] header
+    ); ///< @return result code
+
+
   bool read_entry(
     bufferlist &bl,
     uint64_t &last_seq,
@@ -462,6 +495,10 @@ private:
     uint64_t wanted_seq,
     off64_t *_pos,
     entry_header_t *h);
+  void get_header_old(
+    uint64_t wanted_seq,
+    off64_t *_pos,
+    entry_header_t_old *h);
   void corrupt(
     int wfd,
     off64_t corrupt_at);

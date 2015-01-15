@@ -371,7 +371,7 @@ int FileJournal::create()
 
   // write empty header
   header = header_t();
-  header.flags = header_t::FLAG_CRC;  // enable crcs on any new journal.
+  header.flags = header_t::FLAG_CRC | header_t::FLAG_COMPRESSION;  // enable crcs on any new journal.
   header.fsid = fsid;
   header.max_size = max_size;
   header.block_size = block_size;
@@ -643,6 +643,8 @@ void FileJournal::print_header()
   dout(10) << "header: block_size " << header.block_size
 	   << " alignment " << header.alignment
 	   << " max_size " << header.max_size
+	   << " committed_up_to " << header.committed_up_to
+	   << " flags " << header.flags
 	   << dendl;
   dout(10) << "header: start " << header.start << dendl;
   dout(10) << " write_pos " << write_pos << dendl;
@@ -697,6 +699,9 @@ bufferptr FileJournal::prepare_header()
     Mutex::Locker l(finisher_lock);
     header.committed_up_to = journaled_seq;
   }
+  if (!(header.flags & header_t::FLAG_COMPRESSION)) {
+    header.flags |= header_t::FLAG_COMPRESSION;
+  }
   ::encode(header, bl);
   bufferptr bp = buffer::create_page_aligned(get_top());
   bp.zero();
@@ -704,7 +709,21 @@ bufferptr FileJournal::prepare_header()
   return bp;
 }
 
-
+bool FileJournal::write_header()
+{
+  if (!(header.flags & header_t::FLAG_COMPRESSION)) {
+    Mutex::Locker locker(write_lock);
+    header.flags |= header_t::FLAG_COMPRESSION;
+    must_write_header = true;
+    bufferlist bl;
+    do_write(bl);
+    dout(20) << __func__ << " true" << dendl;
+    return true;
+  } else {
+    dout(20) << __func__ << " false" << dendl;
+    return false;
+  }
+}
 
 int FileJournal::check_for_full(uint64_t seq, off64_t pos, off64_t size)
 {
@@ -866,7 +885,8 @@ int FileJournal::prepare_single_write(bufferlist& bl, off64_t& queue_pos, uint64
   //off64_t base_size = 2*head_size + ebl.length();
   entry_header_t h;
 
-  if (ebl.length() > g_conf->filestore_journal_compression_min && g_conf->filestore_journal_compression) {
+  if (ebl.length() > g_conf->filestore_journal_compression_min &&
+      g_conf->filestore_journal_compression) {
     bufferlist cebl;
     h.orig_length = ebl.length();
     ebl.compress(buffer::ALG_LZ4, cebl);
@@ -988,6 +1008,7 @@ void FileJournal::do_write(bufferlist& bl)
   if (must_write_header) {
     must_write_header = false;
     hbp = prepare_header();
+    print_header();
   }
 
   dout(15) << "do_write writing " << write_pos << "~" << bl.length() 
@@ -1248,6 +1269,7 @@ void FileJournal::do_aio_write(bufferlist& bl)
   if (must_write_header) {
     must_write_header = false;
     hbp = prepare_header();
+    print_header();
   }
 
   // entry
@@ -1753,12 +1775,23 @@ bool FileJournal::read_entry(
   off64_t pos = read_pos;
   off64_t next_pos = pos;
   stringstream ss;
-  read_entry_result result = do_read_entry(
-    pos,
-    &next_pos,
-    &bl,
-    &seq,
-    &ss);
+  read_entry_result result = SUCCESS;
+  if (header.flags & header_t::FLAG_COMPRESSION) {
+     result = do_read_entry(
+       pos,
+       &next_pos,
+       &bl,
+       &seq,
+       &ss);
+
+  } else {
+     result = do_read_entry_old(
+       pos,
+       &next_pos,
+       &bl,
+       &seq,
+       &ss);
+  }
   if (result == SUCCESS) {
     if (next_seq > seq) {
       return false;
@@ -1881,6 +1914,92 @@ FileJournal::read_entry_result FileJournal::do_read_entry(
   return SUCCESS;
 }
 
+FileJournal::read_entry_result FileJournal::do_read_entry_old(
+  off64_t pos,
+  off64_t *next_pos,
+  bufferlist *bl,
+  uint64_t *seq,
+  ostream *ss,
+  entry_header_t_old *_h)
+{
+  bufferlist _bl;
+  if (!bl)
+    bl = &_bl;
+
+  // header
+  entry_header_t_old *h;
+  bufferlist hbl;
+  off64_t _next_pos;
+  wrap_read_bl(pos, sizeof(*h), &hbl, &_next_pos);
+  h = (entry_header_t_old *)hbl.c_str();
+
+  if (!h->check_magic(pos, header.get_fsid64())) {
+    dout(25) << "read_entry " << pos
+	     << " : bad header magic, end of journal" << dendl;
+    if (ss)
+      *ss << "bad header magic";
+    if (next_pos)
+      *next_pos = pos + (4<<10); // check 4k ahead
+    return MAYBE_CORRUPT;
+  }
+  pos = _next_pos;
+
+  // pad + body + pad
+  if (h->pre_pad)
+    pos += h->pre_pad;
+
+  bl->clear();
+  wrap_read_bl(pos, h->len, bl, &pos);
+
+  if (h->post_pad)
+    pos += h->post_pad;
+
+  // footer
+  entry_header_t_old *f;
+  bufferlist fbl;
+  wrap_read_bl(pos, sizeof(*f), &fbl, &pos);
+  f = (entry_header_t_old *)fbl.c_str();
+  if (memcmp(f, h, sizeof(*f))) {
+    if (ss)
+      *ss << "bad footer magic, partial entry";
+    if (next_pos)
+      *next_pos = pos;
+    return MAYBE_CORRUPT;
+  }
+
+  if ((header.flags & header_t::FLAG_CRC) ||   // if explicitly enabled (new journal)
+      h->crc32c != 0) {                        // newer entry in old journal
+    uint32_t actual_crc = bl->crc32c(0);
+    if (actual_crc != h->crc32c) {
+      if (ss)
+	*ss << "header crc (" << h->crc32c
+	    << ") doesn't match body crc (" << actual_crc << ")";
+      if (next_pos)
+	*next_pos = pos;
+      return MAYBE_CORRUPT;
+    }
+  }
+
+  // yay!
+  dout(2) << "read_entry_old " << pos << " : seq " << h->seq
+	  << " " << h->len << " bytes"
+	  << dendl;
+
+  // ok!
+  if (seq)
+    *seq = h->seq;
+  journalq.push_back(pair<uint64_t,off64_t>(h->seq, pos));
+
+  if (next_pos)
+    *next_pos = pos;
+
+  if (_h)
+    *_h = *h;
+  
+  assert(pos % header.alignment == 0);
+  return SUCCESS;
+}
+
 void FileJournal::throttle()
 {
   if (throttle_ops.wait(g_conf->journal_queue_max_ops))
@@ -1902,6 +2021,36 @@ void FileJournal::get_header(
     bl.clear();
     pos = next_pos;
     read_entry_result result = do_read_entry(
+      pos,
+      &next_pos,
+      &bl,
+      &seq,
+      0,
+      h);
+    if (result == FAILURE || result == MAYBE_CORRUPT)
+      assert(0);
+    if (seq == wanted_seq) {
+      if (_pos)
+	*_pos = pos;
+      return;
+    }
+  }
+  assert(0); // not reachable
+}
+
+void FileJournal::get_header_old(
+  uint64_t wanted_seq,
+  off64_t *_pos,
+  entry_header_t_old *h)
+{
+  off64_t pos = header.start;
+  off64_t next_pos = pos;
+  bufferlist bl;
+  uint64_t seq = 0;
+  while (1) {
+    bl.clear();
+    pos = next_pos;
+    read_entry_result result = do_read_entry_old(
       pos,
       &next_pos,
       &bl,

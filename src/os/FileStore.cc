@@ -1471,6 +1471,9 @@ int FileStore::mount()
 
   ret = journal_replay(initial_op_seq);
   flush_dbcache();
+  flush();
+  sync();
+  journal->write_header();
   if (ret < 0) {
     derr << "mount failed to open journal " << journalpath << ": " << cpp_strerror(ret) << dendl;
     if (ret == -ENOTTY) {
