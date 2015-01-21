@@ -949,13 +949,12 @@ public:
       must_scrub(false), must_deep_scrub(false), must_repair(false),
       classic(false),
       finalizing(false), is_chunky(false), state(INACTIVE),
-      deep(false)
+      deep(false),
+      last_scrub_num_objects(0), last_scrub_num_bytes(0),
+      last_scrub_stamp(utime_t())
     {
     }
 
-    uint32_t last_scrub_num_objects;
-    uint32_t last_scrub_num_bytes;
-    utime_t last_scrub_stamp;
     // metadata
     set<pg_shard_t> reserved_peers;
     bool reserved, reserve_failed;
@@ -1009,6 +1008,10 @@ public:
 
     // deep scrub
     bool deep;
+
+    uint32_t last_scrub_num_objects;
+    uint32_t last_scrub_num_bytes;
+    utime_t last_scrub_stamp;
 
     list<Context*> callbacks;
     void add_callback(Context *context) {
@@ -1088,6 +1091,10 @@ public:
       inconsistent.clear();
       missing.clear();
       authoritative.clear();
+
+      last_scrub_num_objects = 0;
+      last_scrub_num_bytes = 0;
+      last_scrub_stamp = utime_t();
     }
 
   } scrubber;

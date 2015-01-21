@@ -473,6 +473,9 @@ public:
   Mutex agent_timer_lock;
   SafeTimer agent_timer;
 
+  Mutex scrub_timer_lock;
+  SafeTimer scrub_timer;    // safe timer (osd_scrub_lock)
+
   void agent_entry();
   void agent_stop();
 
