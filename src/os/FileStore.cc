@@ -76,6 +76,8 @@ using ceph::crypto::SHA1;
 #include "include/assert.h"
 
 #include "common/config.h"
+#include "common/blkdev.h"
+#include <mntent.h>
 
 #define dout_subsys ceph_subsys_filestore
 #undef dout_prefix
@@ -433,6 +435,8 @@ FileStore::FileStore(const std::string &base, const std::string &jdev, const cha
   force_sync(false), sync_epoch(0),
   sync_entry_timeo_lock("sync_entry_timeo_lock"),
   timer(g_ceph_context, sync_entry_timeo_lock),
+  fstrim(false),
+  last_fstrim(utime_t()),
   stop(false), sync_thread(this),
   fdcache_lock("fdcache_lock"),
   fdcache(g_ceph_context),
@@ -1502,6 +1506,17 @@ int FileStore::mount()
     }
   }
 
+  if (g_conf->filestore_fstrim) {
+    string blk;
+    bool ret = file_to_blkdev(basedir, blk);
+    dout(1) << blk << " is mount on " << basedir << dendl;
+
+    if (ret) {
+      fstrim = block_device_support_discard(blk.c_str());
+      dout(1) << " support discard: " << (int)fstrim << dendl;
+    }
+  }
+
   journal_start();
 
   op_tp.start();
@@ -1580,6 +1595,94 @@ int FileStore::umount()
   return 0;
 }
 
+bool FileStore::file_to_blkdev(string& file, string& blkdev)
+{
+  struct  mntent  *ent = NULL;
+  struct  statfs64  stat;
+  multimap<string, string> blkdev_map;
+
+  FILE *fp = setmntent(MOUNTED, "r"); // read /etc/mtab
+  while( (ent = getmntent(fp)) != NULL){
+    bzero(&stat, sizeof(struct statfs));
+    if(-1 == statfs64(ent->mnt_dir, &stat)){
+        continue;
+    }
+
+    long all = stat.f_bsize * stat.f_blocks;
+    if (all) {
+      string::size_type pos(0);
+
+      string dir = ent->mnt_dir;
+      while(true) { //replace "//" with "/" in file path
+        if( (pos = dir.find("//")) != string::npos ) {
+          dir.replace(pos, 2, "/");
+        }
+        else
+          break;
+      }
+
+      string fsname = ent->mnt_fsname;
+      while(true) {
+        if( (pos = fsname.find("//")) != string::npos ) {
+          fsname.replace(pos, 2, "/");
+        }
+        else
+          break;
+      }
+      blkdev_map.insert(make_pair(dir, fsname));
+    }
+  }
+  endmntent(fp);
+
+  string path = file;
+  while(true) {
+    if (blkdev_map.count(path) > 1) {
+      derr << __func__ << " find multiple block dev mount on /" << dendl;
+      return false;
+    }
+    else if (blkdev_map.count(path) == 1) {
+      blkdev = blkdev_map.find(path)->second;
+      return true;
+    } else if (path.compare("/") == 0) {
+      derr << __func__ << " Do not find which block dev mount on /" << dendl;
+      assert(false);
+    }
+
+    int last = path.find_last_of('/');
+    if (last > 0) {
+      path = path.substr(0, last);
+    } else if (last == 0) {
+      path = "/";
+    } else {
+      derr << __func__ << " Do not find char '/' in " << file << dendl;
+      assert(false);
+    }
+  }
+}
+
+/* returns: 0 = success, 1 = unsupported, < 0 = error */
+int FileStore::do_fstrim()
+{
+   struct fstrim_range range;
+   memset(&range, 0, sizeof(range));
+   range.len = ULLONG_MAX;
+   struct stat sb;
+
+   if (fstat(basedir_fd, &sb) == -1) {
+     dout(10) << __func__ << " stat failed " << basedir << dendl;
+     return -1;
+   }
+   errno = 0;
+   if (ioctl(basedir_fd, FITRIM, &range)) {
+     int rc = errno == EOPNOTSUPP || errno == ENOTTY ? 1 : -1;
+     if (rc != 1)
+       dout(10) << __func__ << " " << basedir << " FITRIM ioctl failed " << dendl;
+     return rc;
+   }
+
+   dout(10) << __func__ << " " << basedir << " " << range.len << " bytes trimmed" << dendl;
+   return 0;
+}
 
 int FileStore::get_max_object_name_length()
 {
@@ -3436,6 +3539,17 @@ void FileStore::sync_entry()
       }
     }
     static utime_t last_sync = ceph_clock_now(g_ceph_context);
+
+    if (fstrim) {
+      utime_t now = ceph_clock_now(g_ceph_context);
+      utime_t diff = now - last_fstrim;
+      dout(10) << "do_fstrim at " << now
+        << ": " << (double)diff << " min (" << g_ceph_context->_conf->filestore_fstrim_interval << " seconds)" << dendl;
+      if ((double)diff >= g_ceph_context->_conf->filestore_fstrim_interval) {
+        do_fstrim();
+        last_fstrim = now;
+      }
+    }
 
     flush_dbcache();
 

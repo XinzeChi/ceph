@@ -169,6 +169,9 @@ private:
   Mutex sync_entry_timeo_lock;
   SafeTimer timer;
 
+  bool fstrim;
+  utime_t last_fstrim;
+
   list<Context*> sync_waiters;
   bool stop;
   void sync_entry();
@@ -366,6 +369,8 @@ public:
   int get_max_object_name_length();
   int mkfs();
   int mkjournal();
+  bool file_to_blkdev(string& file, string& blkdev);
+  int do_fstrim();
 
   /**
    * set_allow_sharded_objects()
