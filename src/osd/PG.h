@@ -950,7 +950,7 @@ public:
       classic(false),
       finalizing(false), is_chunky(false), state(INACTIVE),
       deep(false),
-      last_scrub_num_objects(0), last_scrub_num_bytes(0),
+      next_scrub_chunk_max(0), last_scrub_num_bytes(0),
       last_scrub_stamp(utime_t())
     {
     }
@@ -1009,7 +1009,7 @@ public:
     // deep scrub
     bool deep;
 
-    uint32_t last_scrub_num_objects;
+    uint32_t next_scrub_chunk_max;
     uint32_t last_scrub_num_bytes;
     utime_t last_scrub_stamp;
 
@@ -1092,7 +1092,7 @@ public:
       missing.clear();
       authoritative.clear();
 
-      last_scrub_num_objects = 0;
+      next_scrub_chunk_max = 0;
       last_scrub_num_bytes = 0;
       last_scrub_stamp = utime_t();
     }

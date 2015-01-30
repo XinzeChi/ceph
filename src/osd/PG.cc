@@ -3904,12 +3904,14 @@ void PG::chunky_scrub(ThreadPool::TPHandle &handle)
           bool boundary_found = false;
           hobject_t start = scrubber.start;
           uint32_t scrub_objects = 0;
+          if (!scrubber.next_scrub_chunk_max)
+            scrubber.next_scrub_chunk_max = cct->_conf->osd_scrub_chunk_max;
           while (!boundary_found) {
             vector<hobject_t> objects;
             ret = get_pgbackend()->objects_list_partial(
 	      start,
 	      cct->_conf->osd_scrub_chunk_min,
-	      cct->_conf->osd_scrub_chunk_max,
+	      MIN(scrubber.next_scrub_chunk_max, (uint32_t)cct->_conf->osd_scrub_chunk_max),
 	      0,
 	      &objects,
 	      &candidate_end);
@@ -3948,7 +3950,7 @@ void PG::chunky_scrub(ThreadPool::TPHandle &handle)
 	  scrubber.end = candidate_end;
 
           scrubber.last_scrub_stamp = ceph_clock_now(cct);
-          scrubber.last_scrub_num_objects = scrub_objects;
+          scrubber.next_scrub_chunk_max = scrub_objects;
           if (info.stats.stats.sum.num_objects) {
             scrubber.last_scrub_num_bytes = info.stats.stats.sum.num_bytes *
                              scrub_objects / info.stats.stats.sum.num_objects;
@@ -4061,11 +4063,21 @@ void PG::chunky_scrub(ThreadPool::TPHandle &handle)
                      << cct->_conf->osd_deep_scrub_rate_max << " ratio " << ratio << " interval " << interval << dendl;
             double wait_secs = ratio - interval;
             if (wait_secs > 0) {
+              if (ratio >= 1.2 * interval) {
+                uint32_t max = scrubber.next_scrub_chunk_max;
+                scrubber.next_scrub_chunk_max = MAX(cct->_conf->osd_scrub_chunk_min, scrubber.next_scrub_chunk_max / 1.2);
+                dout(20) << __func__ << " scrubber.next_scrub_chunk_max " << max << " -> " << scrubber.next_scrub_chunk_max << dendl;
+              }
               dout(20) << __func__ << " should wait " << wait_secs << " secs" << dendl;
               osd->scrub_timer_lock.Lock();
               osd->scrub_timer.add_event_after(wait_secs, new C_Scrub_Tick(osd, this));
               osd->scrub_timer_lock.Unlock();
             } else {
+              if (ratio <= interval / 1.2) {
+                uint32_t max = scrubber.next_scrub_chunk_max;
+                scrubber.next_scrub_chunk_max = MIN(cct->_conf->osd_scrub_chunk_max, scrubber.next_scrub_chunk_max * 1.2);
+                dout(20) << __func__ << " scrubber.next_scrub_chunk_max " << max << " -> " << scrubber.next_scrub_chunk_max << dendl;
+              }
               osd->scrub_wq.queue(this);
             }
           } else {
