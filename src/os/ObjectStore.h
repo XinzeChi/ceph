@@ -1543,6 +1543,8 @@ public:
   // DEBUG
   virtual void inject_data_error(const ghobject_t &oid) {}
   virtual void inject_mdata_error(const ghobject_t &oid) {}
+
+  virtual bool do_force_fstrim() { return false; }
 };
 WRITE_CLASS_ENCODER(ObjectStore::Transaction)
 

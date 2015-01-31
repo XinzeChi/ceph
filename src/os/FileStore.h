@@ -371,6 +371,8 @@ public:
   int mkjournal();
   bool file_to_blkdev(string& file, string& blkdev);
   int do_fstrim();
+  bool check_do_fstrim(bool force = false);
+  bool do_force_fstrim() { return check_do_fstrim(true); }
 
   /**
    * set_allow_sharded_objects()
