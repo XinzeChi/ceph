@@ -1932,6 +1932,12 @@ void ReplicatedPG::reply_ctx(OpContext *ctx, int r, eversion_t v, version_t uv)
 
 void ReplicatedPG::log_op_stats(OpContext *ctx)
 {
+  int log_level = 15; 
+  if (!g_ceph_context->_conf->perf &&
+      !g_ceph_context->_conf->subsys.should_gather(ceph_subsys_osd, log_level)) {
+    return ;
+  }
+
   OpRequestRef op = ctx->op;
   MOSDOp *m = static_cast<MOSDOp*>(op->get_req());
 
@@ -1978,7 +1984,7 @@ void ReplicatedPG::log_op_stats(OpContext *ctx)
   } else
     assert(0);
 
-  dout(15) << "log_op_stats " << *m
+  dout(log_level) << "log_op_stats " << *m
 	   << " inb " << inb
 	   << " outb " << outb
 	   << " rlat " << rlatency

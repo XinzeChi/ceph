@@ -631,6 +631,7 @@ void FileJournal::stop_writer()
 #endif
   } 
   write_thread.join();
+  write_header();
 #ifdef HAVE_LIBAIO
   write_finish_thread.join();
 #endif
@@ -712,17 +713,14 @@ bufferptr FileJournal::prepare_header()
 bool FileJournal::write_header()
 {
   if (!(header.flags & header_t::FLAG_COMPRESSION)) {
-    Mutex::Locker locker(write_lock);
     header.flags |= header_t::FLAG_COMPRESSION;
-    must_write_header = true;
-    bufferlist bl;
-    do_write(bl);
-    dout(20) << __func__ << " true" << dendl;
-    return true;
-  } else {
-    dout(20) << __func__ << " false" << dendl;
-    return false;
   }
+  Mutex::Locker locker(write_lock);
+  must_write_header = true;
+  bufferlist bl;
+  do_write(bl);
+  dout(20) << __func__ << " finish" << dendl;
+  return true;
 }
 
 int FileJournal::check_for_full(uint64_t seq, off64_t pos, off64_t size)
