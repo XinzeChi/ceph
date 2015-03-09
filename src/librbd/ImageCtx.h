@@ -132,6 +132,30 @@ namespace librbd {
     xlist<AsyncResizeRequest*> async_resize_reqs;
 
     ContextWQ *aio_work_queue;
+    // Configuration
+    static const string METADATA_CONF_PREFIX;
+    bool cache;
+    bool cache_writethrough_until_flush;
+    uint64_t cache_size;
+    uint64_t cache_max_dirty;
+    uint64_t cache_target_dirty;
+    double cache_max_dirty_age;
+    uint32_t cache_max_dirty_object;
+    bool cache_block_writes_upfront;
+    uint32_t concurrent_management_ops;
+    bool balance_snap_reads;
+    bool localize_snap_reads;
+    bool balance_parent_reads;
+    bool localize_parent_reads;
+    uint32_t readahead_trigger_requests;
+    uint64_t readahead_max_bytes;
+    uint64_t readahead_disable_after_bytes;
+    bool clone_copy_on_read;
+    bool blacklist_on_break_lock;
+    uint32_t blacklist_expire_seconds;
+    uint32_t request_timed_out_seconds;
+    static bool _filter_metadata_confs(const string &prefix, std::map<string, bool> &configs,
+                                       map<string, bufferlist> &pairs, map<string, bufferlist> *res);
 
     /**
      * Either image_name or image_id must be set.
@@ -211,6 +235,7 @@ namespace librbd {
     void flush_async_operations(Context *on_finish);
 
     void cancel_async_requests();
+    void apply_metadata_confs();
   };
 }
 
