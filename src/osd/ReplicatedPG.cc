@@ -1624,6 +1624,7 @@ bool ReplicatedPG::maybe_handle_cache(OpRequestRef op,
   case pg_pool_t::CACHEMODE_WRITEBACK:
     if (obc.get() && obc->obs.exists) {
       ops_hit++;
+      osd->logger->inc(l_osd_op_hit_total);
       return false;
     }
     if (agent_state &&
@@ -1647,6 +1648,7 @@ bool ReplicatedPG::maybe_handle_cache(OpRequestRef op,
   case pg_pool_t::CACHEMODE_FORWARD:
     if (obc.get() && obc->obs.exists) {
       ops_hit++;
+      osd->logger->inc(l_osd_op_hit_total);
       return false;
     }
     if (must_promote)
@@ -1659,6 +1661,7 @@ bool ReplicatedPG::maybe_handle_cache(OpRequestRef op,
     // TODO: clean this case up
     if (obc.get() && obc->obs.exists) {
       ops_hit++;
+      osd->logger->inc(l_osd_op_hit_total);
       return false;
     }
     if (!obc.get() && r == -ENOENT) {
