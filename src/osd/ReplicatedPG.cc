@@ -1853,6 +1853,7 @@ bool ReplicatedPG::maybe_handle_cache(OpRequestRef op,
 	     << " in_hit_set " << (int)in_hit_set
 	     << dendl;
 
+  osd->logger->inc(l_osd_op_cache_total);
   // if it is write-ordered and blocked, stop now
   if (obc.get() && obc->is_blocked() && write_ordered) {
     // we're already doing something with this object
