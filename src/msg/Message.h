@@ -299,6 +299,7 @@ protected:
     /* call completion hooks (if any) */
     if (completion_hook)
       completion_hook->complete(0);
+    clear_buffers(); // let subclass drop buffers as well
   }
 public:
   inline const ConnectionRef& get_connection() const { return connection; }
@@ -343,7 +344,6 @@ public:
     if (byte_throttler)
       byte_throttler->put(data.length());
     data.clear();
-    clear_buffers(); // let subclass drop buffers as well
   }
 
   bool empty_payload() { return payload.length() == 0; }
