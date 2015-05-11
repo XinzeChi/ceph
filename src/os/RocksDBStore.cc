@@ -9,6 +9,7 @@
 
 #include "rocksdb/db.h"
 #include "rocksdb/env.h"
+#include "rocksdb/table.h"
 #include "rocksdb/write_batch.h"
 #include "rocksdb/slice.h"
 #include "rocksdb/cache.h"
@@ -25,8 +26,10 @@ int RocksDBStore::init()
   options.write_buffer_size = g_conf->rocksdb_write_buffer_size;
   options.cache_size = g_conf->rocksdb_cache_size;
   options.block_size = g_conf->rocksdb_block_size;
+  options.bloom_bits_per_key = g_conf->rocksdb_bloom_bits_per_key;
   options.bloom_size = g_conf->rocksdb_bloom_size;
   options.compression_type = g_conf->rocksdb_compression;
+  options.compression_per_level = g_conf->rocksdb_compression_per_level;
   options.paranoid_checks = g_conf->rocksdb_paranoid;
   options.max_open_files = g_conf->rocksdb_max_open_files;
   options.log_file = g_conf->rocksdb_log;
@@ -45,9 +48,45 @@ int RocksDBStore::init()
   return 0;
 }
 
+rocksdb::CompressionType string_to_rocksdb_compression_type(const string& type)
+{
+  if (type.empty())
+    return rocksdb::kNoCompression;
+  else if(type == "snappy")
+    return rocksdb::kSnappyCompression;
+  else if(type == "zlib")
+    return rocksdb::kZlibCompression;
+  else if(type == "bzip2")
+    return rocksdb::kBZip2Compression;
+  else if(type == "lz4")
+    return rocksdb::kLZ4Compression;
+  else if(type == "lz4hc")
+    return rocksdb::kLZ4HCCompression;
+  else
+    return rocksdb::kNoCompression;
+}
+
+std::vector<rocksdb::CompressionType> string_to_rocksdb_compression_per_level(string& levels)
+{
+  std::vector<rocksdb::CompressionType> per_level;
+  std::string::size_type pos1, pos2;
+  pos2 = levels.find(",");
+  pos1 = 0;
+  while (std::string::npos != pos2)
+  {
+    per_level.push_back(string_to_rocksdb_compression_type(levels.substr(pos1, pos2 - pos1)));
+    pos1 = pos2 + 1;
+    pos2 = levels.find(",", pos1);
+  }
+  if (pos1 != levels.length())
+    per_level.push_back(string_to_rocksdb_compression_type(levels.substr(pos1)));
+  return per_level;
+}
+
 int RocksDBStore::do_open(ostream &out, bool create_if_missing)
 {
   rocksdb::Options ldoptions;
+  rocksdb::BlockBasedTableOptions table_options;
 
   if (options.write_buffer_size)
     ldoptions.write_buffer_size = options.write_buffer_size;
@@ -61,29 +100,28 @@ int RocksDBStore::do_open(ostream &out, bool create_if_missing)
     ldoptions.target_file_size_base = options.target_file_size_base;
   if (options.max_open_files)
     ldoptions.max_open_files = options.max_open_files;
+
   if (options.cache_size) {
-    ldoptions.block_cache = rocksdb::NewLRUCache(options.cache_size);
+    table_options.block_cache = rocksdb::NewLRUCache(options.cache_size);
   }
-  if (options.block_size)
-    ldoptions.block_size = options.block_size;
-  if (options.bloom_size) {
-    const rocksdb::FilterPolicy *_filterpolicy =
-	rocksdb::NewBloomFilterPolicy(options.bloom_size);
-    ldoptions.filter_policy = _filterpolicy;
-    filterpolicy = _filterpolicy;
+  table_options.block_size = options.block_size;
+  table_options.filter_policy.reset(rocksdb::NewBloomFilterPolicy(options.bloom_bits_per_key, true));
+
+  ldoptions.compression = string_to_rocksdb_compression_type(options.compression_type);
+
+  if(options.num_levels)
+    ldoptions.num_levels = options.num_levels;
+
+  if (!options.compression_per_level.empty()) {
+    std::vector<rocksdb::CompressionType> per_level =
+       string_to_rocksdb_compression_per_level(options.compression_per_level);
+    if (per_level.size() && per_level.size() == ldoptions.num_levels) {
+      ldoptions.compression_per_level = per_level;
+    }
   }
-  if (options.compression_type.length() == 0)
-    ldoptions.compression = rocksdb::kNoCompression;
-  else if(options.compression_type == "snappy")
-    ldoptions.compression = rocksdb::kSnappyCompression;
-  else if(options.compression_type == "zlib")
-    ldoptions.compression = rocksdb::kZlibCompression;
-  else if(options.compression_type == "bzip2")
-    ldoptions.compression = rocksdb::kBZip2Compression;
-  else
-    ldoptions.compression = rocksdb::kNoCompression;
+
   if (options.block_restart_interval)
-    ldoptions.block_restart_interval = options.block_restart_interval;
+    table_options.block_restart_interval = options.block_restart_interval;
 
   ldoptions.error_if_exists = options.error_if_exists;
   ldoptions.paranoid_checks = options.paranoid_checks;
@@ -95,10 +133,12 @@ int RocksDBStore::do_open(ostream &out, bool create_if_missing)
   } else {
     ldoptions.info_log_level = (rocksdb::InfoLogLevel)get_info_log_level(options.info_log_level);
   }
+
+  //apply table_options
+  ldoptions.table_factory.reset(NewBlockBasedTableFactory(table_options));
+  
   if(options.disableDataSync)
     ldoptions.disableDataSync = options.disableDataSync;
-  if(options.num_levels)
-    ldoptions.num_levels = options.num_levels;
   if(options.level0_file_num_compaction_trigger)
     ldoptions.level0_file_num_compaction_trigger = options.level0_file_num_compaction_trigger;
   if(options.level0_slowdown_writes_trigger)
@@ -151,9 +191,7 @@ RocksDBStore::~RocksDBStore()
   close();
   delete logger;
 
-  // Ensure db is destroyed before dependent db_cache and filterpolicy
   delete db;
-  delete filterpolicy;
 }
 
 void RocksDBStore::close()
