@@ -905,7 +905,7 @@ int FileJournal::prepare_single_write(bufferlist& bl, off64_t& queue_pos, uint64
   if (r < 0)
     return r;   // ENOSPC or EAGAIN
 
-  orig_bytes += ebl.length();
+  orig_bytes += (h.orig_length ? h.orig_length : ebl.length());
   orig_ops++;
 
   // add to write buffer
