@@ -271,21 +271,26 @@ public:
     list<
       boost::tuple<
 	uint64_t, uint64_t, map<pg_shard_t, bufferlist> > > returned;
+    list<list<boost::tuple<pg_shard_t, uint64_t, uint64_t> > > shard_read;
+    list<bool> direct_fast_read;
     read_result_t() : r(0) {}
   };
   struct read_request_t {
     const list<boost::tuple<uint64_t, uint64_t, uint32_t> > to_read;
-    const set<pg_shard_t> need;
+    const list<list<boost::tuple<pg_shard_t, uint64_t, uint64_t> > > shard_read;
     const bool want_attrs;
     GenContext<pair<RecoveryMessages *, read_result_t& > &> *cb;
+    const list<bool> direct_fast_read;
+    const list<boost::tuple<uint64_t, uint64_t, uint32_t> > origin_to_read;
     read_request_t(
-      const hobject_t &hoid,
       const list<boost::tuple<uint64_t, uint64_t, uint32_t> > &to_read,
-      const set<pg_shard_t> &need,
+      const list<list<boost::tuple<pg_shard_t, uint64_t, uint64_t> > > &shard_read,
       bool want_attrs,
-      GenContext<pair<RecoveryMessages *, read_result_t& > &> *cb)
-      : to_read(to_read), need(need), want_attrs(want_attrs),
-	cb(cb) {}
+      GenContext<pair<RecoveryMessages *, read_result_t& > &> *cb,
+      const list<bool> r,
+      const list<boost::tuple<uint64_t, uint64_t, uint32_t> > origin_to_read)
+      : to_read(to_read), shard_read(shard_read), want_attrs(want_attrs),
+	cb(cb), direct_fast_read(r), origin_to_read(origin_to_read) {}
   };
   friend ostream &operator<<(ostream &lhs, const read_request_t &rhs);
 
@@ -310,6 +315,7 @@ public:
     void dump(Formatter *f) const;
 
     set<pg_shard_t> in_progress;
+
   };
   friend struct FinishReadOp;
   void filter_read_op(
@@ -336,7 +342,7 @@ public:
    * Client writes
    *
    * ECTransaction is responsible for generating a transaction for
-   * each shard to which we need to send the write.  As required
+   * each shard to which we shard_read to send the write.  As required
    * by the PGBackend interface, the ECBackend write mechanism
    * passes trim information with the write and last_complete back
    * with the reply.
@@ -483,6 +489,28 @@ public:
     const hobject_t &hoid,
     const set<int> &avail,
     set<pg_shard_t> *to_read);
+
+  void filter_acting_read_shards(
+    const hobject_t &hoid,
+    set<int> &have,
+    map<shard_id_t, pg_shard_t> &shards
+  );
+
+  int could_complete_op(
+    const ReadOp &rop,
+    const hobject_t &hoid,
+    bool no_in_process
+  );
+
+  bool direct_fast_read_for_op(
+    const read_request_t &req
+  );
+
+  bool could_do_direct_fast_read(
+    uint64_t offset,
+    uint64_t len,
+    bool fast_read
+  );
 
   int objects_get_attrs(
     const hobject_t &hoid,
