@@ -4590,19 +4590,20 @@ int FileStore::omap_get(coll_t c, const ghobject_t &hoid,
 {
   tracepoint(objectstore, omap_get_enter, c.c_str());
   dout(15) << __func__ << " " << c << "/" << hoid << dendl;
-  //Index index;
-  //int r = get_index(c, &index);
-  //if (r < 0)
-  //  return r;
-  //{
-  //  assert(NULL != index.index);
-  //  RWLock::RLocker l((index.index)->access_lock);
-  //  r = lfn_find(hoid, index);
-  //  if (r < 0)
-  //    return r;
-  //}
   int r = object_map->get(hoid, header, out);
-  if (r < 0 && r != -ENOENT) {
+  if (r == -ENOENT) {
+    Index index;
+    r = get_index(c, &index);
+    if (r < 0)
+      return r;
+    {
+      assert(NULL != index.index);
+      RWLock::RLocker l((index.index)->access_lock);
+      r = lfn_find(hoid, index);
+      if (r < 0)
+        return r;
+    }
+  } else if (r < 0) {
     assert(!m_filestore_fail_eio || r != -EIO);
     return r;
   }
@@ -4618,19 +4619,20 @@ int FileStore::omap_get_header(
 {
   tracepoint(objectstore, omap_get_header_enter, c.c_str());
   dout(15) << __func__ << " " << c << "/" << hoid << dendl;
-  //Index index;
-  //int r = get_index(c, &index);
-  //if (r < 0)
-  //  return r;
-  //{
-  //  assert(NULL != index.index);
-  //  RWLock::RLocker l((index.index)->access_lock);
-  //  r = lfn_find(hoid, index);
-  //  if (r < 0)
-  //    return r;
-  //}
   int r = object_map->get_header(hoid, bl);
-  if (r < 0 && r != -ENOENT) {
+  if (r == -ENOENT) {
+    Index index;
+    r = get_index(c, &index);
+    if (r < 0)
+      return r;
+    {
+      assert(NULL != index.index);
+      RWLock::RLocker l((index.index)->access_lock);
+      r = lfn_find(hoid, index);
+      if (r < 0)
+        return r;
+    }
+  } else if (r < 0) {
     assert(allow_eio || !m_filestore_fail_eio || r != -EIO);
     return r;
   }
@@ -4642,19 +4644,20 @@ int FileStore::omap_get_keys(coll_t c, const ghobject_t &hoid, set<string> *keys
 {
   tracepoint(objectstore, omap_get_keys_enter, c.c_str());
   dout(15) << __func__ << " " << c << "/" << hoid << dendl;
-  //Index index;
-  //int r = get_index(c, &index);
-  //if (r < 0)
-  //  return r;
-  //{
-  //  assert(NULL != index.index);
-  //  RWLock::RLocker l((index.index)->access_lock);
-  //  r = lfn_find(hoid, index);
-  //  if (r < 0)
-  //    return r;
-  //}
   int r = object_map->get_keys(hoid, keys);
-  if (r < 0 && r != -ENOENT) {
+  if (r == -ENOENT) {
+    Index index;
+    r = get_index(c, &index);
+    if (r < 0)
+      return r;
+    {
+      assert(NULL != index.index);
+      RWLock::RLocker l((index.index)->access_lock);
+      r = lfn_find(hoid, index);
+      if (r < 0)
+        return r;
+    }
+  } else if (r < 0) {
     assert(!m_filestore_fail_eio || r != -EIO);
     return r;
   }
@@ -4668,19 +4671,20 @@ int FileStore::omap_get_values(coll_t c, const ghobject_t &hoid,
 {
   tracepoint(objectstore, omap_get_values_enter, c.c_str());
   dout(15) << __func__ << " " << c << "/" << hoid << dendl;
-  //Index index;
-  //int r = get_index(c, &index);
-  //if (r < 0)
-  //  return r;
-  //{
-  //  assert(NULL != index.index);
-  //  RWLock::RLocker l((index.index)->access_lock);
-  //  r = lfn_find(hoid, index);
-  //  if (r < 0)
-  //    return r;
-  //}
   int r = object_map->get_values(hoid, keys, out);
-  if (r < 0 && r != -ENOENT) {
+  if (r == -ENOENT) {
+    Index index;
+    r = get_index(c, &index);
+    if (r < 0)
+      return r;
+    {
+      assert(NULL != index.index);
+      RWLock::RLocker l((index.index)->access_lock);
+      r = lfn_find(hoid, index);
+      if (r < 0)
+        return r;
+    }
+  } else if (r < 0) {
     assert(!m_filestore_fail_eio || r != -EIO);
     return r;
   }
@@ -4694,19 +4698,20 @@ int FileStore::omap_check_keys(coll_t c, const ghobject_t &hoid,
 {
   tracepoint(objectstore, omap_check_keys_enter, c.c_str());
   dout(15) << __func__ << " " << c << "/" << hoid << dendl;
-  //Index index;
-  //int r = get_index(c, &index);
-  //if (r < 0)
-  //  return r;
-  //{
-  //  assert(NULL != index.index);
-  //  RWLock::RLocker l((index.index)->access_lock);
-  //  r = lfn_find(hoid, index);
-  //  if (r < 0)
-  //    return r;
-  //}
   int r = object_map->check_keys(hoid, keys, out);
-  if (r < 0 && r != -ENOENT) {
+  if (r == -ENOENT) {
+    Index index;
+    r = get_index(c, &index);
+    if (r < 0)
+      return r;
+    {
+      assert(NULL != index.index);
+      RWLock::RLocker l((index.index)->access_lock);
+      r = lfn_find(hoid, index);
+      if (r < 0)
+        return r;
+    }
+  } else if (r < 0) {
     assert(!m_filestore_fail_eio || r != -EIO);
     return r;
   }
@@ -4979,20 +4984,22 @@ void FileStore::_inject_failure()
 int FileStore::_omap_clear(coll_t cid, const ghobject_t &hoid,
 			   const SequencerPosition &spos) {
   dout(15) << __func__ << " " << cid << "/" << hoid << dendl;
-  //Index index;
-  //int r = get_index(cid, &index);
-  //if (r < 0)
-  //  return r;
-  //{
-  //  assert(NULL != index.index);
-  //  RWLock::RLocker l((index.index)->access_lock);
-  //  r = lfn_find(hoid, index);
-  //  if (r < 0)
-  //    return r;
-  //}
   int r = object_map->clear_keys_header(hoid, &spos);
-  if (r < 0 && r != -ENOENT)
+  if (r == -ENOENT) {
+    Index index;
+    r = get_index(cid, &index);
+    if (r < 0)
+      return r;
+    {
+      assert(NULL != index.index);
+      RWLock::RLocker l((index.index)->access_lock);
+      r = lfn_find(hoid, index);
+      if (r < 0)
+        return r;
+    }
+  } else if (r < 0) {
     return r;
+  }
   return 0;
 }
 
@@ -5000,22 +5007,24 @@ int FileStore::_omap_setkeys(coll_t cid, const ghobject_t &hoid,
 			     const map<string, bufferlist> &aset,
 			     const SequencerPosition &spos) {
   dout(15) << __func__ << " " << cid << "/" << hoid << dendl;
-  //Index index;
-  //int r = get_index(cid, &index);
-  //if (r < 0) {
-  //  dout(20) << __func__ << " get_index got " << cpp_strerror(r) << dendl;
-  //  return r;
-  //}
-  //{
-  //  assert(NULL != index.index);
-  //  RWLock::RLocker l((index.index)->access_lock);
-  //  r = lfn_find(hoid, index);
-  //  if (r < 0) {
-  //    dout(20) << __func__ << " lfn_find got " << cpp_strerror(r) << dendl;
-  //    return r;
-  //  }
-  //}
   int r = object_map->set_keys(hoid, aset, &spos);
+  if (r == -ENOENT) {
+    Index index;
+    r = get_index(cid, &index);
+    if (r < 0) {
+      dout(20) << __func__ << " get_index got " << cpp_strerror(r) << dendl;
+      return r;
+    }
+    {
+      assert(NULL != index.index);
+      RWLock::RLocker l((index.index)->access_lock);
+      r = lfn_find(hoid, index);
+      if (r < 0) {
+        dout(20) << __func__ << " lfn_find got " << cpp_strerror(r) << dendl;
+        return r;
+      }
+    }
+  }
   dout(20) << __func__ << " " << cid << "/" << hoid << " = " << r << dendl;
   return r;
 }
@@ -5024,20 +5033,22 @@ int FileStore::_omap_rmkeys(coll_t cid, const ghobject_t &hoid,
 			    const set<string> &keys,
 			    const SequencerPosition &spos) {
   dout(15) << __func__ << " " << cid << "/" << hoid << dendl;
-  //Index index;
-  //int r = get_index(cid, &index);
-  //if (r < 0)
-  //  return r;
-  //{
-  //  assert(NULL != index.index);
-  //  RWLock::RLocker l((index.index)->access_lock);
-  //  r = lfn_find(hoid, index);
-  //  if (r < 0)
-  //    return r;
-  //}
   int r = object_map->rm_keys(hoid, keys, &spos);
-  if (r < 0 && r != -ENOENT)
+  if (r == -ENOENT) {
+    Index index;
+    r = get_index(cid, &index);
+    if (r < 0)
+      return r;
+    {
+      assert(NULL != index.index);
+      RWLock::RLocker l((index.index)->access_lock);
+      r = lfn_find(hoid, index);
+      if (r < 0)
+        return r;
+    }
+  } else if (r < 0) {
     return r;
+  }
   return 0;
 }
 
@@ -5063,18 +5074,23 @@ int FileStore::_omap_setheader(coll_t cid, const ghobject_t &hoid,
 			       const SequencerPosition &spos)
 {
   dout(15) << __func__ << " " << cid << "/" << hoid << dendl;
-  //Index index;
-  //int r = get_index(cid, &index);
-  //if (r < 0)
-  //  return r;
-  //{
-  //  assert(NULL != index.index);
-  //  RWLock::RLocker l((index.index)->access_lock);
-  //  r = lfn_find(hoid, index);
-  //  if (r < 0)
-  //    return r;
-  //}
-  return object_map->set_header(hoid, bl, &spos);
+  int r = object_map->set_header(hoid, bl, &spos);
+  if (r == -ENOENT) {
+    Index index;
+    r = get_index(cid, &index);
+    if (r < 0)
+      return r;
+    {
+      assert(NULL != index.index);
+      RWLock::RLocker l((index.index)->access_lock);
+      r = lfn_find(hoid, index);
+      if (r < 0)
+        return r;
+    }
+  } else if (r < 0) {
+    return r;
+  }
+  return 0;
 }
 
 int FileStore::_split_collection(coll_t cid,
