@@ -45,6 +45,9 @@ int RocksDBStore::init()
   options.disableWAL = g_conf->rocksdb_disableWAL;
   options.wal_dir = g_conf->rocksdb_wal_dir;
   options.info_log_level = g_conf->rocksdb_info_log_level;
+  options.max_bytes_for_level_base = g_conf->rocksdb_max_bytes_for_level_base;
+  options.max_bytes_for_level_multiplier = g_conf->rocksdb_max_bytes_for_level_multiplier;
+  options.rocksdb_stats_dump_period_sec = g_conf->rocksdb_stats_dump_period_sec;
   return 0;
 }
 
@@ -100,6 +103,10 @@ int RocksDBStore::do_open(ostream &out, bool create_if_missing)
     ldoptions.target_file_size_base = options.target_file_size_base;
   if (options.max_open_files)
     ldoptions.max_open_files = options.max_open_files;
+
+  ldoptions.max_bytes_for_level_base = options.max_bytes_for_level_base;
+  ldoptions.max_bytes_for_level_multiplier = options.max_bytes_for_level_multiplier;
+  ldoptions.stats_dump_period_sec = options.rocksdb_stats_dump_period_sec;
 
   if (options.cache_size) {
     table_options.block_cache = rocksdb::NewLRUCache(options.cache_size);

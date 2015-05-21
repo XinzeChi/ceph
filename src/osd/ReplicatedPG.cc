@@ -1769,12 +1769,14 @@ bool ReplicatedPG::maybe_handle_cache(OpRequestRef op,
 	     << " missing_oid " << missing_oid
 	     << " must_promote " << (int)must_promote
 	     << " in_hit_set " << (int)in_hit_set
+	     << " r " << r
 	     << dendl;
   else
     dout(25) << __func__ << " (no obc)"
 	     << " missing_oid " << missing_oid
 	     << " must_promote " << (int)must_promote
 	     << " in_hit_set " << (int)in_hit_set
+	     << " r " << r
 	     << dendl;
 
   // if it is write-ordered and blocked, stop now
@@ -1826,6 +1828,7 @@ bool ReplicatedPG::maybe_handle_cache(OpRequestRef op,
       return true;
     }
     if (can_skip_promote(op)) {
+      dout(20) << __func__ << " " << obc->obs.oi << " skip promote" << dendl;
       return false;
     }
     if (op->may_write() || write_ordered || !hit_set) {

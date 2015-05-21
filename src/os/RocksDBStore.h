@@ -135,6 +135,10 @@ public:
     string log_file;
     string wal_dir;
     string info_log_level;
+    
+    uint64_t max_bytes_for_level_base;
+    int max_bytes_for_level_multiplier;
+    int rocksdb_stats_dump_period_sec;
 
     options_t() :
       write_buffer_size(0), //< 0 means default
@@ -154,7 +158,10 @@ public:
       disableDataSync(false),
       disableWAL(false),
       num_levels(0),
-      info_log_level("info")
+      info_log_level("info"),
+      max_bytes_for_level_base(0),
+      max_bytes_for_level_multiplier(0),
+      rocksdb_stats_dump_period_sec(0)
     {}
   } options;
 

@@ -710,6 +710,9 @@ OPTION(rocksdb_disableWAL, OPT_BOOL, false)  // diable write ahead log
 OPTION(rocksdb_num_levels, OPT_INT, 7) // number of levels for this database
 OPTION(rocksdb_wal_dir, OPT_STR, "")  //  rocksdb write ahead log file
 OPTION(rocksdb_info_log_level, OPT_STR, "info")  // info log level : debug , info , warn, error, fatal
+OPTION(rocksdb_max_bytes_for_level_base, OPT_U64, 10 << 20)
+OPTION(rocksdb_max_bytes_for_level_multiplier, OPT_INT, 10)
+OPTION(rocksdb_stats_dump_period_sec, OPT_INT, 600)
 
 /**
  * osd_client_op_priority and osd_recovery_op_priority adjust the relative

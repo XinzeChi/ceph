@@ -918,7 +918,7 @@ int FileJournal::prepare_single_write(bufferlist& bl, off64_t& queue_pos, uint64
 
   // add to write buffer
   dout(15) << "prepare_single_write " << orig_ops << " will write " << queue_pos << " : seq " << seq
-	   << " len " << ebl.length() << " -> " << size
+	   << " origin len " << (h.orig_length ? h.orig_length : ebl.length()) << " compress len " << ebl.length() << " -> " << size
 	   << " (head " << head_size << " pre_pad " << pre_pad
 	   << " ebl " << ebl.length() << " post_pad " << post_pad << " tail " << head_size << ")"
 	   << " (ebl alignment " << alignment << ")"
