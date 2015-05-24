@@ -1171,13 +1171,17 @@ void FileJournal::write_thread_entry()
   while (1) {
     {
       Mutex::Locker locker(writeq_lock);
-      if (writeq.empty() && !must_write_header) {
-	if (write_stop)
+      utime_t min_interval;
+      min_interval.set_from_double(g_conf->journal_write_min_interval);
+      if ((writeq.empty() || writeq.size() < g_conf->journal_write_ops_batch) && !must_write_header) {
+	if (write_stop) {
 	  break;
-	dout(20) << "write_thread_entry going to sleep" << dendl;
-	writeq_cond.Wait(writeq_lock);
-	dout(20) << "write_thread_entry woke up" << dendl;
-	continue;
+        }
+	dout(30) << "write_thread_entry going to sleep" << dendl;
+	writeq_cond.WaitInterval(g_ceph_context, writeq_lock, min_interval);
+	dout(30) << "write_thread_entry woke up" << dendl;
+        if (writeq.empty() && !must_write_header)
+	  continue;
       }
     }
     
@@ -1239,7 +1243,7 @@ void FileJournal::write_thread_entry()
     }
     assert(r == 0);
 
-    if (logger) {
+    if (logger && bl.length()) {
       logger->inc(l_os_j_wr);
       logger->inc(l_os_j_wr_bytes, bl.length());
     }
@@ -1525,7 +1529,7 @@ void FileJournal::submit_entry(uint64_t seq, bufferlist& e, int alignment,
     completions.push_back(
       completion_item(
 	seq, oncommit, ceph_clock_now(g_ceph_context), osd_op));
-    if (writeq.empty())
+    if (g_conf->journal_write_ops_batch < 1 || writeq.size() >= g_conf->journal_write_ops_batch - 1)
       writeq_cond.Signal();
     writeq.push_back(write_item(seq, e, alignment, osd_op));
   }

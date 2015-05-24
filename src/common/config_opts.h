@@ -859,6 +859,8 @@ OPTION(journal_block_align, OPT_BOOL, true)
 OPTION(journal_write_header_frequency, OPT_U64, 0)
 OPTION(journal_max_write_bytes, OPT_INT, 10 << 20)
 OPTION(journal_max_write_entries, OPT_INT, 100)
+OPTION(journal_write_min_interval, OPT_DOUBLE, 5.0)
+OPTION(journal_write_ops_batch, OPT_U32, 0)
 OPTION(journal_queue_max_ops, OPT_INT, 300)
 OPTION(journal_queue_max_bytes, OPT_INT, 32 << 20)
 OPTION(journal_align_min_size, OPT_INT, 64 << 10)  // align data payloads >= this.
