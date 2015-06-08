@@ -489,6 +489,7 @@ bool ReplicatedPG::maybe_await_blocked_snapset(
     op->need_promote() ||
     op->may_write() ||
     op->may_cache() ||
+    op->may_ignore_cache() ||
     op->may_read_ordered();
 
   ObjectContextRef obc;
@@ -2044,7 +2045,6 @@ void ReplicatedPG::do_proxy_read(OpRequestRef op)
 		 m->get_object_locator().get_pool(),
 		 m->get_object_locator().nspace);
   unsigned flags = CEPH_OSD_FLAG_IGNORE_CACHE | CEPH_OSD_FLAG_IGNORE_OVERLAY;
-  dout(10) << __func__ << " Start proxy read for " << *m << dendl;
 
   ProxyReadOpRef prdop(new ProxyReadOp(op, soid, m->ops));
 
@@ -2064,6 +2064,7 @@ void ReplicatedPG::do_proxy_read(OpRequestRef op)
   prdop->objecter_tid = tid;
   proxyread_ops[tid] = prdop;
   in_progress_proxy_reads[soid].push_back(op);
+  dout(10) << __func__ << " Start proxy read for " << *m << " tid " << tid << dendl;
 }
 
 void ReplicatedPG::finish_proxy_read(hobject_t oid, ceph_tid_t tid, int r)
@@ -2106,6 +2107,7 @@ void ReplicatedPG::finish_proxy_read(hobject_t oid, ceph_tid_t tid, int r)
   osd->logger->inc(l_osd_tier_proxy_read);
 
   MOSDOp *m = static_cast<MOSDOp*>(op->get_req());
+  m->ops = prdop->ops;
   OpContext *ctx = new OpContext(op, m->get_reqid(), prdop->ops, this);
   ctx->reply = new MOSDOpReply(m, 0, get_osdmap()->get_epoch(), 0, false);
   ctx->user_at_version = prdop->user_version;
@@ -2128,7 +2130,7 @@ void ReplicatedPG::kick_proxy_read_blocked(hobject_t& soid)
 
 void ReplicatedPG::cancel_proxy_read(ProxyReadOpRef prdop)
 {
-  dout(10) << __func__ << " " << prdop->soid << dendl;
+  dout(10) << __func__ << " " << prdop->soid << " tid " << prdop->objecter_tid << dendl;
   prdop->canceled = true;
 
   // cancel objecter op, if we can
@@ -6216,7 +6218,8 @@ void ReplicatedPG::start_copy(CopyCallback *cb, ObjectContextRef obc,
 			   mirror_snapset));
   copy_ops[dest] = cop;
   if (!op || (op->may_read() && !op->may_write() &&
-      !op->may_cache() && !op->may_read_ordered()))
+      !op->may_cache() && !op->may_read_ordered() &&
+      !op->may_ignore_cache() && !op->need_promote()))
     obc->start_read_block();
   else
     obc->start_write_block();
