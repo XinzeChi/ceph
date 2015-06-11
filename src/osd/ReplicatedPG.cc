@@ -1803,8 +1803,22 @@ bool ReplicatedPG::maybe_handle_cache(OpRequestRef op,
     return false;
   }
 
+  // older versions do not proxy the feature bits.
+  bool can_proxy_read = get_osdmap()->get_up_osd_features() &
+    CEPH_FEATURE_OSD_PROXY_FEATURES;
   if (obc.get() && obc->obs.exists) {
     osd->logger->inc(l_osd_op_cache_hit);
+    if (obc->peek_read_lock() && obc->is_write_inflight() && !obc->obs.oi.is_dirty() &&
+        !write_ordered && pool.info.cache_mode == pg_pool_t::CACHEMODE_WRITEBACK) {
+      if (can_proxy_read) {
+        dout(20) << __func__ << " not dirty, not write, proxying read" << dendl;
+        do_proxy_read(op);
+      } else {
+        dout(20) << __func__ << " not dirty, not write, redirect read" << dendl;
+        do_cache_redirect(op);
+      }
+      return true;
+    }
     return false;
   }
   
@@ -1820,9 +1834,6 @@ bool ReplicatedPG::maybe_handle_cache(OpRequestRef op,
     return false;
   }
 
-  // older versions do not proxy the feature bits.
-  bool can_proxy_read = get_osdmap()->get_up_osd_features() &
-    CEPH_FEATURE_OSD_PROXY_FEATURES;
   OpRequestRef promote_op;
 
   switch (pool.info.cache_mode) {
