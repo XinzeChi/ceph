@@ -3058,6 +3058,19 @@ public:
       waiters.push_back(op);
       return false;
     }
+    bool peek_read_lock() {
+      // don't starve anybody!
+      if (!waiters.empty()) {
+       return false;
+      }
+      switch (state) {
+      case RWNONE:
+      case RWREAD:
+       return true;
+      default:
+       return false;
+      }
+    }
     /// this function adjusts the counts if necessary
     bool get_read_lock() {
       // don't starve anybody!
@@ -3173,6 +3186,9 @@ public:
     bool empty() const { return state == RWNONE; }
   } rwstate;
 
+  bool peek_read_lock() {
+    return rwstate.peek_read_lock();
+  }
   bool get_read(OpRequestRef op) {
     return rwstate.get_read(op);
   }
@@ -3291,6 +3307,12 @@ public:
     return write_blocked;
   }
 
+  bool is_write_inflight() {
+    lock.Lock();
+    bool inflight = writers_waiting || unstable_writes;
+    lock.Unlock();
+    return inflight;
+  }
   // do simple synchronous mutual exclusion, for now.  now waitqueues or anything fancy.
   void ondisk_write_lock() {
     lock.Lock();
