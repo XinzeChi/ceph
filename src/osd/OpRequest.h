@@ -108,6 +108,7 @@ public:
   bool send_map_update;
   epoch_t sent_epoch;
   bool hitset_inserted;
+  bool already_reply;
   Message *get_req() const { return request; }
   bool been_queued_for_pg() { return hit_flag_points & flag_queued_for_pg; }
   bool been_reached_pg() { return hit_flag_points & flag_reached_pg; }
@@ -121,6 +122,7 @@ public:
   bool currently_started() { return latest_flag_point & flag_started; }
   bool currently_sub_op_sent() { return latest_flag_point & flag_sub_op_sent; }
   bool currently_commit_sent() { return latest_flag_point & flag_commit_sent; }
+  bool been_reply() { return already_reply; }
 
   const char *state_string() const {
     switch(latest_flag_point) {
@@ -161,6 +163,9 @@ public:
     dequeued_time = deq_time;
   }
 
+  void set_reply() {
+    already_reply = true;
+  }
   osd_reqid_t get_reqid() const {
     return reqid;
   }
