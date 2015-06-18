@@ -1756,8 +1756,21 @@ struct CallClientContexts :
       res.returned.pop_front();
     }
     status->complete = true;
+    bool no_wait_reply = false;
     list<ECBackend::ClientAsyncReadStatus> &ip =
       ec->in_progress_client_reads;
+    for (list<ECBackend::ClientAsyncReadStatus>::iterator i = ip.begin();
+           i != ip.end();
+           ++i) {
+      if (i->read_ordered) {
+         no_wait_reply = true;
+         break;
+      }
+    }
+    if (!no_wait_reply) {
+      status->on_complete->complete(0);
+      status->on_complete = NULL;
+    }
     while (ip.size() && ip.front().complete) {
       if (ip.front().on_complete) {
 	ip.front().on_complete->complete(0);
@@ -1780,9 +1793,10 @@ void ECBackend::objects_read_async(
   const hobject_t &hoid,
   const list<pair<boost::tuple<uint64_t, uint64_t, uint32_t>,
 		  pair<bufferlist*, Context*> > > &to_read,
-  Context *on_complete)
+  Context *on_complete,
+  bool read_ordered)
 {
-  in_progress_client_reads.push_back(ClientAsyncReadStatus(on_complete));
+  in_progress_client_reads.push_back(ClientAsyncReadStatus(on_complete, read_ordered));
   CallClientContexts *c = new CallClientContexts(
     this, &(in_progress_client_reads.back()), to_read);
 

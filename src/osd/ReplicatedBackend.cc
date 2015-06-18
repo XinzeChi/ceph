@@ -289,7 +289,8 @@ void ReplicatedBackend::objects_read_async(
   const hobject_t &hoid,
   const list<pair<boost::tuple<uint64_t, uint64_t, uint32_t>,
 		  pair<bufferlist*, Context*> > > &to_read,
-  Context *on_complete)
+  Context *on_complete,
+  bool read_ordered)
 {
   int r = 0;
   for (list<pair<boost::tuple<uint64_t, uint64_t, uint32_t>,

@@ -137,15 +137,17 @@ public:
   struct ClientAsyncReadStatus {
     bool complete;
     Context *on_complete;
-    ClientAsyncReadStatus(Context *on_complete)
-    : complete(false), on_complete(on_complete) {}
+    bool read_ordered;
+    ClientAsyncReadStatus(Context *on_complete, bool ordered)
+    : complete(false), on_complete(on_complete), read_ordered(ordered) {}
   };
   list<ClientAsyncReadStatus> in_progress_client_reads;
   void objects_read_async(
     const hobject_t &hoid,
     const list<pair<boost::tuple<uint64_t, uint64_t, uint32_t>,
 		    pair<bufferlist*, Context*> > > &to_read,
-    Context *on_complete);
+    Context *on_complete,
+    bool read_ordered);
 
 private:
   friend struct ECRecoveryHandle;

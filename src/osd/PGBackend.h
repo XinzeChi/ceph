@@ -590,7 +590,8 @@
      const hobject_t &hoid,
      const list<pair<boost::tuple<uint64_t, uint64_t, uint32_t>,
 		pair<bufferlist*, Context*> > > &to_read,
-     Context *on_complete) = 0;
+     Context *on_complete,
+     bool read_ordered) = 0;
 
    virtual bool scrub_supported() { return false; }
    void be_scan_list(

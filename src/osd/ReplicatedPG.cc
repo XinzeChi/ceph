@@ -93,35 +93,41 @@ PGLSFilter::~PGLSFilter()
 struct OnReadComplete : public Context {
   ReplicatedPG *pg;
   ReplicatedPG::OpContext *opcontext;
+  pair<OpRequestRef, ReplicatedPG::OpContext*> p;
   OnReadComplete(
     ReplicatedPG *pg,
-    ReplicatedPG::OpContext *ctx) : pg(pg), opcontext(ctx) {}
+    ReplicatedPG::OpContext *ctx,
+    pair<OpRequestRef, ReplicatedPG::OpContext*> o) : pg(pg), opcontext(ctx), p(o) {}
   void finish(int r) {
     if (r < 0)
       opcontext->async_read_result = r;
-    opcontext->finish_read(pg);
+    opcontext->finish_read(pg, p);
   }
   ~OnReadComplete() {}
 };
 
 // OpContext
-void ReplicatedPG::OpContext::start_async_reads(ReplicatedPG *pg)
+void ReplicatedPG::OpContext::start_async_reads(ReplicatedPG *pg, pair<OpRequestRef, ReplicatedPG::OpContext*> p)
 {
   inflightreads = 1;
   pg->pgbackend->objects_read_async(
     obc->obs.oi.soid,
     pending_async_reads,
-    new OnReadComplete(pg, this));
+    new OnReadComplete(pg, this, p),
+    op->may_read_ordered());
   pending_async_reads.clear();
 }
-void ReplicatedPG::OpContext::finish_read(ReplicatedPG *pg)
+void ReplicatedPG::OpContext::finish_read(ReplicatedPG *pg, pair<OpRequestRef, ReplicatedPG::OpContext*> p)
 {
   assert(inflightreads > 0);
   --inflightreads;
   if (async_reads_complete()) {
     assert(pg->in_progress_async_reads.size());
-    assert(pg->in_progress_async_reads.front().second == this);
-    pg->in_progress_async_reads.pop_front();
+    list<pair<OpRequestRef, OpContext*> >::iterator it = std::find(pg->in_progress_async_reads.begin(),
+      pg->in_progress_async_reads.end(), p);
+    assert(it != pg->in_progress_async_reads.end());
+    assert(it->second == this);
+    pg->in_progress_async_reads.erase(it);
     pg->complete_read_ctx(async_read_result, this);
   }
 }
@@ -2051,6 +2057,9 @@ void ReplicatedPG::do_proxy_read(OpRequestRef op)
 		 m->get_object_locator().get_pool(),
 		 m->get_object_locator().nspace);
   unsigned flags = CEPH_OSD_FLAG_IGNORE_CACHE | CEPH_OSD_FLAG_IGNORE_OVERLAY;
+  if (op->may_read_ordered()) {
+    flags|= CEPH_OSD_FLAG_RWORDERED;
+  }
 
   ProxyReadOpRef prdop(new ProxyReadOp(op, soid, m->ops));
 
@@ -2389,8 +2398,9 @@ void ReplicatedPG::execute_ctx(OpContext *ctx)
     if (ctx->pending_async_reads.empty()) {
       complete_read_ctx(result, ctx);
     } else {
-      in_progress_async_reads.push_back(make_pair(op, ctx));
-      ctx->start_async_reads(this);
+      pair<OpRequestRef, OpContext*> p(make_pair(op, ctx));
+      in_progress_async_reads.push_back(p);
+      ctx->start_async_reads(this, p);
     }
 
     return;

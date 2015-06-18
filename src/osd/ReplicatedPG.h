@@ -573,8 +573,8 @@ public:
     int async_read_result;
     unsigned inflightreads;
     friend struct OnReadComplete;
-    void start_async_reads(ReplicatedPG *pg);
-    void finish_read(ReplicatedPG *pg);
+    void start_async_reads(ReplicatedPG *pg, pair<OpRequestRef, ReplicatedPG::OpContext*> p);
+    void finish_read(ReplicatedPG *pg, pair<OpRequestRef, ReplicatedPG::OpContext*> p);
     bool async_reads_complete() {
       return inflightreads == 0;
     }
