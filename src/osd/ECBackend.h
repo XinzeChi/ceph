@@ -148,6 +148,7 @@ public:
 		    pair<bufferlist*, Context*> > > &to_read,
     Context *on_complete,
     bool read_ordered);
+  void object_preheat(const hobject_t &hoid, OpRequestRef op);
 
 private:
   friend struct ECRecoveryHandle;

@@ -593,6 +593,9 @@
      Context *on_complete,
      bool read_ordered) = 0;
 
+   virtual void object_preheat(
+     const hobject_t &hoid, OpRequestRef op) {}
+
    virtual bool scrub_supported() { return false; }
    void be_scan_list(
      ScrubMap &map, const vector<hobject_t> &ls, bool deep, uint32_t seed,
