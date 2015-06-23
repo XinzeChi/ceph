@@ -4122,6 +4122,10 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
           result = -EOPNOTSUPP;
           break;
         }
+        if (pool.info.require_rollback()) {
+          result = -EOPNOTSUPP;
+          break;
+        }
 	if (maybe_create_new_object(ctx)) {
           ctx->mod_desc.create();
           t->touch(soid);
