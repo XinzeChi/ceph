@@ -1956,46 +1956,55 @@ void ECBackend::be_deep_scrub(
   ScrubMap::object &o,
   ThreadPool::TPHandle &handle) {
   bufferhash h(-1); // we always used -1
-  int r;
-  uint64_t stride = cct->_conf->osd_deep_scrub_stride;
-  if (stride % sinfo.get_chunk_size())
-    stride += sinfo.get_chunk_size() - (stride % sinfo.get_chunk_size());
-  uint64_t pos = 0;
-  while (true) {
-    bufferlist bl;
-    handle.reset_tp_timeout();
-    r = store->read(
-      coll,
-      ghobject_t(
-	poid, ghobject_t::NO_GEN, get_parent()->whoami_shard().shard),
-      pos,
-      stride, bl,
-      true);
-    if (r < 0)
-      break;
-    if (bl.length() % sinfo.get_chunk_size()) {
-      r = -EIO;
-      break;
-    }
-    pos += r;
-    // TODO
-    h << bl;
-    if ((unsigned)r < stride)
-      break;
-  }
-
-  if (r == -EIO) {
-    dout(0) << "_scan_list  " << poid << " got "
-	    << r << " on read, read_error" << dendl;
-    o.read_error = true;
-  }
 
   ECUtil::CompactInfoRef cinfo = get_compact_info(poid);
   if (!cinfo) {
     dout(0) << "_scan_list  " << poid << " could not retrieve compact info" << dendl;
     o.read_error = true;
     o.digest_present = false;
-  } else {
+  }
+  
+  shard_id_t shard = get_parent()->whoami_shard().shard;
+  if (!o.read_error) {
+    int r;
+    uint64_t stride = cct->_conf->osd_deep_scrub_stride;
+    if (stride % sinfo.get_chunk_size())
+      stride += sinfo.get_chunk_size() - (stride % sinfo.get_chunk_size());
+    uint64_t pos = 0;
+    uint64_t read_pos = 0;
+    while (true) {
+      pair<uint32_t, uint32_t> loc = cinfo->convert_compact_ranges(shard, read_pos, stride);
+      bufferlist bl;
+      handle.reset_tp_timeout();
+      r = store->read(
+        coll,
+        ghobject_t(
+          poid, ghobject_t::NO_GEN, shard),
+        loc.first,
+        loc.second, bl,
+        true);
+      if (r < 0)
+        break;
+      bufferlist dbl;
+      cinfo->decompact(shard, loc.first, loc.second, bl, dbl);
+      bl.claim(dbl);
+      if (bl.length() % sinfo.get_chunk_size()) {
+        r = -EIO;
+        break;
+      }
+      pos += r;
+      read_pos += stride;
+      h << bl;
+      if ((unsigned)r < loc.second)
+        break;
+    }
+
+    if (r == -EIO) {
+      dout(0) << "_scan_list  " << poid << " got "
+              << r << " on read, read_error" << dendl;
+      o.read_error = true;
+    }
+
     if (cinfo->get_total_chunk_size(get_parent()->whoami_shard().shard) != pos) {
       dout(0) << "_scan_list  " << poid << " got incorrect size on read" << dendl;
       o.read_error = true;
@@ -2020,7 +2029,8 @@ void ECBackend::be_deep_scrub(
      * chunk 0 matches that of our peers, there is likely no corruption.
      */
     o.digest = hinfo->get_chunk_hash(0);
-    o.digest_present = true;
+    if (!o.digest_present)
+      o.digest_present = true;
   }
 
   o.omap_digest = seed;
