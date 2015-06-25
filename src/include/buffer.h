@@ -220,12 +220,7 @@ public:
     unsigned raw_length() const;
     int raw_nref() const;
 
-    void copy_out(unsigned o, unsigned l, char *dest) const {
-      assert(_raw);
-      if (!((o <= _len) && (o+l <= _len)))
-	throw end_of_buffer();
-      memcpy(dest, c_str()+o, l);
-    }
+    void copy_out(unsigned o, unsigned l, char *dest) const;
 
     bool can_zero_copy() const;
     int zero_copy_to_fd(int fd, int64_t *offset) const;
@@ -239,11 +234,11 @@ public:
     void set_offset(unsigned o) { _off = o; }
     void set_length(unsigned l) { _len = l; }
 
-    void append(char c);
-    void append(const char *p, unsigned l);
-    void copy_in(unsigned o, unsigned l, const char *src);
-    void zero();
-    void zero(unsigned o, unsigned l);
+    unsigned append(char c);
+    unsigned append(const char *p, unsigned l);
+    void copy_in(unsigned o, unsigned l, const char *src, bool crc_reset = true);
+    void zero(bool crc_reset = true);
+    void zero(unsigned o, unsigned l, bool crc_reset = true);
 
   };
 
@@ -324,7 +319,7 @@ public:
       void copy_all(list &dest);
 
       // copy data in
-      void copy_in(unsigned len, const char *src);
+      void copy_in(unsigned len, const char *src, bool crc_reset = true);
       void copy_in(unsigned len, const list& otherl);
 
     };
@@ -459,7 +454,7 @@ public:
     void copy(unsigned off, unsigned len, char *dest) const;
     void copy(unsigned off, unsigned len, list &dest) const;
     void copy(unsigned off, unsigned len, std::string& dest) const;
-    void copy_in(unsigned off, unsigned len, const char *src);
+    void copy_in(unsigned off, unsigned len, const char *src, bool crc_reset = true);
     void copy_in(unsigned off, unsigned len, const list& src);
 
     void append(char c);
