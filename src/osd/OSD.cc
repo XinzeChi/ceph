@@ -196,6 +196,7 @@ OSDService::OSDService(OSD *osd) :
   pre_publish_lock("OSDService::pre_publish_lock"),
   sched_scrub_lock("OSDService::sched_scrub_lock"), scrubs_pending(0),
   scrubs_active(0),
+  reject_scrub_pg(pair<spg_t, bool>(spg_t(), false)),
   agent_lock("OSD::agent_lock"),
   agent_valid_iterator(false),
   agent_ops(0),
@@ -5115,12 +5116,22 @@ void OSD::handle_scrub(MOSDScrub *m)
       PG *pg = p->second;
       pg->lock();
       if (pg->is_primary()) {
-	pg->unreg_next_scrub();
-	pg->scrubber.must_scrub = true;
-	pg->scrubber.must_deep_scrub = m->deep || m->repair;
-	pg->scrubber.must_repair = m->repair;
-	pg->reg_next_scrub();
-	dout(10) << "marking " << *pg << " for scrub" << dendl;
+        if (m->stop_scrub && !pg->scrubber.must_scrub) {
+         derr << __func__ << *pg << " stop_scrub should stop manual scrub" << dendl;
+          pg->unlock();
+          continue;
+        }
+        pg->unreg_next_scrub();
+        if (!m->stop_scrub) {
+         pg->scrubber.must_scrub = true;
+         pg->scrubber.must_deep_scrub = m->deep || m->repair;
+         pg->scrubber.must_repair = m->repair;
+         pg->scrubber.stop_scrub = false;
+        } else {
+          pg->scrubber.stop_scrub = true;
+        }
+        pg->reg_next_scrub();
+        dout(10) << "marking " << *pg << " for scrub" << dendl;
       }
       pg->unlock();
     }
@@ -5134,10 +5145,21 @@ void OSD::handle_scrub(MOSDScrub *m)
 	PG *pg = pg_map[pcand];
 	pg->lock();
 	if (pg->is_primary()) {
-	  pg->unreg_next_scrub();
-	  pg->scrubber.must_scrub = true;
-	  pg->scrubber.must_deep_scrub = m->deep || m->repair;
-	  pg->scrubber.must_repair = m->repair;
+          if (m->stop_scrub && !pg->scrubber.must_scrub) {
+           derr << __func__ << *pg << " stop_scrub should stop manual scrub" << dendl;
+            pg->unlock();
+            continue;
+          }
+         pg->unreg_next_scrub();
+          if (!m->stop_scrub) {
+           pg->scrubber.must_scrub = true;
+           pg->scrubber.must_deep_scrub = m->deep || m->repair;
+           pg->scrubber.must_repair = m->repair;
+           pg->reg_next_scrub();
+           pg->scrubber.stop_scrub = false;
+          } else {
+            pg->scrubber.stop_scrub = true;
+          }
 	  pg->reg_next_scrub();
 	  dout(10) << "marking " << *pg << " for scrub" << dendl;
 	}
@@ -5219,6 +5241,31 @@ bool OSD::scrub_should_schedule()
 	   << " < max " << cct->_conf->osd_scrub_load_threshold
 	   << " = yes" << dendl;
   return loadavgs[0] < cct->_conf->osd_scrub_load_threshold;
+}
+
+bool OSDService::first_scrub_stamp(pair<utime_t, spg_t> *out) 
+{
+  sched_scrub_lock.Lock();
+  if (last_scrub_pg.empty()) {
+    sched_scrub_lock.Unlock();
+    return false;
+  }
+  if (reject_scrub_pg.second) {
+    spg_t pgid = reject_scrub_pg.first;
+    dout(20) << __func__ << " examine " << pgid << " size " << pg_reg_stamp.size() << dendl;
+    utime_t t = pg_reg_stamp[pgid];
+    dout(20) << __func__ << " examine " << pgid << " size " << pg_reg_stamp.size() << " at " << t << dendl;
+    pair<utime_t, spg_t> pos(t, pgid);
+    sched_scrub_lock.Unlock();
+    if (next_scrub_stamp(pos, out)) {
+        return true;
+    }    
+    sched_scrub_lock.Lock();
+  }    
+  set< pair<utime_t, spg_t> >::iterator iter = last_scrub_pg.begin();
+  *out = *iter;
+  sched_scrub_lock.Unlock();
+  return true;
 }
 
 void OSD::sched_scrub()

@@ -951,7 +951,8 @@ public:
       finalizing(false), is_chunky(false), state(INACTIVE),
       deep(false),
       next_scrub_chunk_max(0), last_scrub_num_bytes(0),
-      last_scrub_stamp(utime_t())
+      last_scrub_stamp(utime_t()),
+      stop_scrub(false)
     {
     }
 
@@ -1012,6 +1013,7 @@ public:
     uint32_t next_scrub_chunk_max;
     uint32_t last_scrub_num_bytes;
     utime_t last_scrub_stamp;
+    bool stop_scrub;
 
     list<Context*> callbacks;
     void add_callback(Context *context) {
@@ -1095,6 +1097,7 @@ public:
       next_scrub_chunk_max = 0;
       last_scrub_num_bytes = 0;
       last_scrub_stamp = utime_t();
+      stop_scrub = false;
     }
 
   } scrubber;

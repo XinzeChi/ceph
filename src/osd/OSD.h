@@ -409,10 +409,14 @@ public:
   int scrubs_pending;
   int scrubs_active;
   set< pair<utime_t,spg_t> > last_scrub_pg;
+  map<spg_t, utime_t> pg_reg_stamp;
+  pair<spg_t, bool> reject_scrub_pg;
 
   void reg_last_pg_scrub(spg_t pgid, utime_t t) {
     Mutex::Locker l(sched_scrub_lock);
     last_scrub_pg.insert(pair<utime_t,spg_t>(t, pgid));
+    pg_reg_stamp[pgid] = t;
+    reject_scrub_pg.second = false;
   }
   void unreg_last_pg_scrub(spg_t pgid, utime_t t) {
     Mutex::Locker l(sched_scrub_lock);
@@ -420,15 +424,10 @@ public:
     set<pair<utime_t,spg_t> >::iterator it = last_scrub_pg.find(p);
     assert(it != last_scrub_pg.end());
     last_scrub_pg.erase(it);
+    pg_reg_stamp.erase(pgid);
+    reject_scrub_pg.second = false;
   }
-  bool first_scrub_stamp(pair<utime_t, spg_t> *out) {
-    Mutex::Locker l(sched_scrub_lock);
-    if (last_scrub_pg.empty())
-      return false;
-    set< pair<utime_t, spg_t> >::iterator iter = last_scrub_pg.begin();
-    *out = *iter;
-    return true;
-  }
+  bool first_scrub_stamp(pair<utime_t, spg_t> *out);
   bool next_scrub_stamp(pair<utime_t, spg_t> next,
 			pair<utime_t, spg_t> *out) {
     Mutex::Locker l(sched_scrub_lock);
@@ -442,6 +441,14 @@ public:
       return false;
     *out = *iter;
     return true;
+  }
+  void next_pg_scrub(spg_t pgid)
+  {
+    Mutex::Locker l(sched_scrub_lock);
+    if (!reject_scrub_pg.second) {
+      reject_scrub_pg.first = pgid;
+      reject_scrub_pg.second = true;
+    }
   }
 
   bool inc_scrubs_pending();

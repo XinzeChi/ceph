@@ -1832,11 +1832,9 @@ bool PG::queue_scrub()
   if (is_scrubbing()) {
     return false;
   }
-  scrubber.must_scrub = false;
   state_set(PG_STATE_SCRUBBING);
   if (scrubber.must_deep_scrub) {
     state_set(PG_STATE_DEEP_SCRUB);
-    scrubber.must_deep_scrub = false;
   }
   if (scrubber.must_repair) {
     state_set(PG_STATE_REPAIR);
@@ -2986,6 +2984,7 @@ bool PG::sched_scrub()
       dout(20) << "sched_scrub: failed, a peer declined" << dendl;
       clear_scrub_reserved();
       scrub_unreserve_replicas();
+      osd->next_pg_scrub(info.pgid);
       ret = false;
     } else if (scrubber.reserved_peers.size() == acting.size()) {
       dout(20) << "sched_scrub: success, reserved self and replicas" << dendl;
@@ -3592,6 +3591,25 @@ void PG::scrub(ThreadPool::TPHandle &handle)
     publish_stats_to_osd();
     unlock();
     return;
+  }
+
+  if (!scrubber.must_scrub) {
+    if ((osd->osd->get_osdmap()->test_flag(CEPH_OSDMAP_NODEEP_SCRUB) && scrubber.deep) ||
+        (osd->osd->get_osdmap()->test_flag(CEPH_OSDMAP_NOSCRUB) && !scrubber.deep)) {
+      dout(10) << "scrub -- noscrub or nodeep scrub" << dendl;
+      scrub_clear_state();
+      scrub_unreserve_replicas();
+      unlock();
+      return;
+    }
+  }
+
+  if (scrubber.stop_scrub && scrubber.must_scrub) {
+      dout(10) << "scrub -- stop manual scrub" << dendl;
+      scrub_clear_state();
+      scrub_unreserve_replicas();
+      unlock();
+      return;
   }
 
   // when we're starting a scrub, we need to determine which type of scrub to do
