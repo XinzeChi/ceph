@@ -302,6 +302,7 @@ std::ostream &operator<<(
   return lhs
     << "ECSubReadReply(tid=" << rhs.tid
     << ", attrs_read=" << rhs.attrs_read.size()
+    << ", from=" << rhs.from
     << ")";
 }
 

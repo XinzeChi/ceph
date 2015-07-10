@@ -212,11 +212,16 @@ struct OnRecoveryReadComplete :
 struct RecoveryMessages {
   map<hobject_t,
       ECBackend::read_request_t> reads;
+  bool wait_for_all_shards;
   void read(
     ECBackend *ec,
     const hobject_t &hoid, uint64_t off, uint64_t len,
     const set<pg_shard_t> &need,
-    bool attrs) {
+    bool attrs,
+    bool all_shards) {
+    if (!wait_for_all_shards && all_shards) {
+       wait_for_all_shards = all_shards;
+    }
     list<boost::tuple<uint64_t, uint64_t, uint32_t> > to_read;
     to_read.push_back(boost::make_tuple(off, len, 0));
     assert(!reads.count(hoid));
@@ -458,7 +463,8 @@ void ECBackend::dispatch_recovery_messages(RecoveryMessages &m, int priority)
   start_read_op(
     priority,
     m.reads,
-    OpRequestRef());
+    OpRequestRef(),
+    m.wait_for_all_shards);
 }
 
 void ECBackend::continue_recovery_op(
@@ -475,8 +481,9 @@ void ECBackend::continue_recovery_op(
       set<int> want(op.missing_on_shards.begin(), op.missing_on_shards.end());
       set<pg_shard_t> to_read;
       uint64_t recovery_max_chunk = get_recovery_chunk_size();
+      bool read_more = false;
       int r = get_min_avail_to_read_shards(
-	op.hoid, want, true, &to_read);
+	op.hoid, want, true, &to_read, read_more);
       if (r != 0) {
 	// we must have lost a recovery source
 	assert(!op.recovery_progress.first);
@@ -486,13 +493,20 @@ void ECBackend::continue_recovery_op(
 	recovery_ops.erase(op.hoid);
 	return;
       }
+      bool wait_for_all_shards = false;
+      if (read_more) {
+        dout(10) << __func__ << " " << op.hoid << " need " << to_read.size() << " shards instead of "
+                << ec_impl->get_data_chunk_count() << dendl;
+        wait_for_all_shards = true;
+      }
       m->read(
 	this,
 	op.hoid,
 	op.recovery_progress.data_recovered_to,
 	recovery_max_chunk,
 	to_read,
-	op.recovery_progress.first);
+	op.recovery_progress.first,
+        wait_for_all_shards);
       op.extent_requested = make_pair(op.recovery_progress.data_recovered_to,
 				      recovery_max_chunk);
       dout(10) << __func__ << ": IDLE return " << op << dendl;
@@ -888,6 +902,7 @@ void ECBackend::handle_sub_read(
 	bl, j->get<2>(),
 	false);
       if (r < 0) {
+        assert(0);
 	reply->buffers_read.erase(i->first);
 	reply->errors[i->first] = r;
 	break;
@@ -1012,8 +1027,7 @@ shard_to_read_map.find(from);
   assert(rop.in_progress.count(from));
   rop.in_progress.erase(from);
   if (!rop.in_progress.empty()) {
-    dout(10) << __func__ << " readop not complete: " << rop << dendl;
-    if (subread_all) {
+    if (subread_all && !rop.wait_for_all_shards) {
       int k = ec_impl->get_data_chunk_count();
       for (map<hobject_t, read_result_t>::iterator i =
             rop.complete.begin();
@@ -1321,7 +1335,8 @@ int ECBackend::get_min_avail_to_read_shards(
   const hobject_t &hoid,
   const set<int> &want,
   bool for_recovery,
-  set<pg_shard_t> *to_read)
+  set<pg_shard_t> *to_read,
+  bool &read_more)
 {
   map<hobject_t, set<pg_shard_t> >::const_iterator miter =
     get_parent()->get_missing_loc_shards().find(hoid);
@@ -1379,15 +1394,19 @@ int ECBackend::get_min_avail_to_read_shards(
   }
 
   set<int> need;
-  if (subread_all && !for_recovery) {
-    if (have.size() < ec_impl->get_data_chunk_count()) {
-      return -EIO;
-    }
+  int r = ec_impl->minimum_to_decode(want, have, &need);
+  if (r < 0)
+    return r;
+
+  dout(10) << __func__ << " want " << want << " have " << have
+           << " need " << need << dendl;
+
+  if (need.size() > ec_impl->get_data_chunk_count()) {
+    read_more = true;
+  }
+  if (subread_all &&
+      have.size() > need.size()) {
     need = have;
-  } else {
-    int r = ec_impl->minimum_to_decode(want, have, &need);
-    if (r < 0)
-      return r;
   }
 
   if (!to_read)
@@ -1405,13 +1424,15 @@ int ECBackend::get_min_avail_to_read_shards(
 void ECBackend::start_read_op(
   int priority,
   map<hobject_t, read_request_t> &to_read,
-  OpRequestRef _op)
+  OpRequestRef _op,
+  bool wait_for_all_shards)
 {
   ceph_tid_t tid = get_parent()->get_tid();
   assert(!tid_to_read_map.count(tid));
   ReadOp &op(tid_to_read_map[tid]);
   op.priority = priority;
   op.tid = tid;
+  op.wait_for_all_shards = wait_for_all_shards;
   op.to_read.swap(to_read);
   op.op = _op;
   dout(10) << __func__ << ": starting " << op << dendl;
@@ -1429,11 +1450,11 @@ void ECBackend::start_read_op(
 	 ++j) {
       if (need_attrs) {
 	messages[*j].attrs_to_read.insert(i->first);
-	need_attrs = false;
       }
       op.obj_to_source[i->first].insert(*j);
       op.source_to_obj[*j].insert(i->first);
     }
+    need_attrs = false;
     for (list<boost::tuple<uint64_t, uint64_t, uint32_t> >::const_iterator j =
 	   i->second.to_read.begin();
 	 j != i->second.to_read.end();
@@ -1647,12 +1668,11 @@ struct CallClientContexts :
       assert(res.returned.front().get<0>() == adjusted.first &&
 	     res.returned.front().get<1>() == adjusted.second);
       map<int, bufferlist> to_decode;
-      bufferlist bl;
       int jj = 0;
       int k = ec->ec_impl->get_data_chunk_count();
       for (map<pg_shard_t, bufferlist>::iterator j =
 	     res.returned.front().get<2>().begin();
-           j != res.returned.front().get<2>().end() && jj < k;
+           j != res.returned.front().get<2>().end();
 	   ++j) {
         uint64_t data_len = j->second.length();
         if ((data_len > 0) && ( data_len % ec->sinfo.get_chunk_size() == 0)) {
@@ -1660,8 +1680,11 @@ struct CallClientContexts :
           jj++;
         }
       }
+      assert(jj >= k); // we needs k shards to decode properly
+
+      bufferlist bl;
       ECUtil::decode(
-	ec->sinfo,
+        ec->sinfo,
 	ec->ec_impl,
 	to_decode,
 	&bl);
@@ -1725,11 +1748,21 @@ void ECBackend::objects_read_async(
     want_to_read.insert(chunk);
   }
   set<pg_shard_t> shards;
+  bool read_more = false;
   int r = get_min_avail_to_read_shards(
     hoid,
     want_to_read,
     false,
-    &shards);
+    &shards,
+    read_more);
+  bool wait_for_all_shards = false;
+  dout(10) << __func__ << ec_impl->get_data_chunk_count() << " "
+            << ec_impl->get_chunk_count() << " "<< shards.size() << dendl;
+  if (read_more) {
+    dout(10) << __func__ << " " << hoid << " need " << shards.size() << " shards instead of "
+            << ec_impl->get_data_chunk_count() << dendl;
+    wait_for_all_shards = true;
+  }
   assert(r == 0);
 
   map<hobject_t, read_request_t> for_read_op;
@@ -1746,7 +1779,8 @@ void ECBackend::objects_read_async(
   start_read_op(
     cct->_conf->osd_client_op_priority,
     for_read_op,
-    OpRequestRef());
+    OpRequestRef(),
+    wait_for_all_shards);
   return;
 }
 

@@ -284,6 +284,7 @@ public:
     int priority;
     ceph_tid_t tid;
     OpRequestRef op; // may be null if not on behalf of a client
+    bool wait_for_all_shards; // true if the op is for recovery, false otherwise
 
     map<hobject_t, read_request_t> to_read;
     map<hobject_t, read_result_t> complete;
@@ -306,7 +307,8 @@ public:
   void start_read_op(
     int priority,
     map<hobject_t, read_request_t> &to_read,
-    OpRequestRef op);
+    OpRequestRef op,
+    bool wait_for_all_shards);
 
 
   /**
@@ -456,7 +458,8 @@ public:
     const hobject_t &hoid,     ///< [in] object
     const set<int> &want,      ///< [in] desired shards
     bool for_recovery,         ///< [in] true if we may use non-acting replicas
-    set<pg_shard_t> *to_read   ///< [out] shards to read
+    set<pg_shard_t> *to_read,   ///< [out] shards to read
+    bool &read_more
     ); ///< @return error code, 0 on success
 
   int objects_get_attrs(
