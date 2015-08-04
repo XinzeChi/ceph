@@ -76,6 +76,7 @@ public:
       async_ops_lock("librbd::ImageCtx::async_ops_lock"),
       copyup_list_lock("librbd::ImageCtx::copyup_list_lock"),
       throttle_lock("librbd::ImageCtx::throttle_lock"),
+      completed_reqs_lock(unique_lock_name("librbd::ImageCtx::completed_reqs_lock", this)),
       extra_read_flags(0),
       old_format(true),
       order(0), size(0), features(0),

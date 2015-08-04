@@ -22,7 +22,6 @@
 #include "common/perf_counters.h"
 #include "common/WorkQueue.h"
 #include "include/Context.h"
-#include "include/rbd/librbd.hpp"
 #include "osdc/ObjectCacher.h"
 
 #include "librbd/AioCompletion.h"
@@ -342,6 +341,7 @@ namespace librbd {
 							     complete_cb);
     pc = (void *)c;
     c->rbd_comp = this;
+    c->enable_event_notify();
   }
 
   bool RBD::AioCompletion::is_complete()
@@ -486,6 +486,15 @@ namespace librbd {
     tracepoint(librbd, get_flags_enter, ictx);
     int r = librbd::get_flags(ictx, flags);
     tracepoint(librbd, get_flags_exit, ictx, r, *flags);
+    return r;
+  }
+
+  int Image::set_image_notification(int fd, int type)
+  {
+    ImageCtx *ictx = (ImageCtx *)ctx;
+    tracepoint(librbd, set_image_notification_enter, ictx, fd, type);
+    int r = librbd::set_image_notification(ictx, fd, type);
+    tracepoint(librbd, set_image_notification_exit, ictx, r);
     return r;
   }
 
@@ -908,6 +917,20 @@ namespace librbd {
     tracepoint(librbd, invalidate_cache_enter, ictx, ictx->name.c_str(), ictx->snap_name.c_str(), ictx->read_only);
     int r = librbd::invalidate_cache(ictx);
     tracepoint(librbd, invalidate_cache_exit, r);
+    return r;
+  }
+
+  int Image::poll_io_events(RBD::AioCompletion **comps, int numcomp, int max)
+  {
+    AioCompletion *cs[numcomp];
+    ImageCtx *ictx = (ImageCtx *)ctx;
+    tracepoint(librbd, poll_io_events_enter, numcomp, max);
+    int r = librbd::poll_io_events(ictx, cs, numcomp, max);
+    tracepoint(librbd, poll_io_events_exit, r);
+    if (r > 0) {
+      for (int i = 0; i < numcomp; ++i)
+        comps[i] = (RBD::AioCompletion *)cs[i]->rbd_comp;
+    }
     return r;
   }
 
@@ -1353,6 +1376,15 @@ extern "C" int rbd_get_flags(rbd_image_t image, uint64_t *flags)
   tracepoint(librbd, get_flags_enter, ictx);
   int r = librbd::get_flags(ictx, flags);
   tracepoint(librbd, get_flags_exit, ictx, r, *flags);
+  return r;
+}
+
+extern "C" int rbd_set_image_notification(rbd_image_t image, int fd, int type)
+{
+  librbd::ImageCtx *ictx = (librbd::ImageCtx *)image;
+  tracepoint(librbd, set_image_notification_enter, ictx, fd, type);
+  int r = librbd::set_image_notification(ictx, fd, type);
+  tracepoint(librbd, set_image_notification_exit, ictx, r);
   return r;
 }
 
@@ -1854,6 +1886,20 @@ extern "C" int rbd_invalidate_cache(rbd_image_t image)
   tracepoint(librbd, invalidate_cache_enter, ictx, ictx->name.c_str(), ictx->snap_name.c_str(), ictx->read_only);
   int r = librbd::invalidate_cache(ictx);
   tracepoint(librbd, invalidate_cache_exit, r);
+  return r;
+}
+
+extern "C" int rbd_poll_io_events(rbd_image_t image, rbd_completion_t *comps, int numcomp, int max)
+{
+  librbd::ImageCtx *ictx = (librbd::ImageCtx *)image;
+  librbd::AioCompletion *cs[numcomp];
+  tracepoint(librbd, poll_io_events_enter, numcomp, max);
+  int r = librbd::poll_io_events(ictx, cs, numcomp, max);
+  tracepoint(librbd, poll_io_events_exit, r);
+  if (r > 0) {
+    for (int i = 0; i < r; ++i)
+      comps[i] = cs[i]->rbd_comp;
+  }
   return r;
 }
 

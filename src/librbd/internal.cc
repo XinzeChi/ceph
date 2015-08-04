@@ -11,6 +11,7 @@
 #include "common/ContextCompletion.h"
 #include "common/Throttle.h"
 #include "common/WorkQueue.h"
+#include "common/event_socket.h"
 #include "cls/lock/cls_lock_client.h"
 #include "include/stringify.h"
 
@@ -1573,6 +1574,21 @@ reprotect_and_return_err:
 
     RWLock::RLocker l2(ictx->snap_lock);
     return ictx->get_flags(ictx->snap_id, flags);
+  }
+
+  int set_image_notification(ImageCtx *ictx, int fd, int type)
+  {
+    CephContext *cct = ictx->cct;
+    ldout(cct, 20) << __func__ << " " << ictx << " fd " << fd << " type" << type << dendl;
+
+    int r = ictx_check(ictx);
+    if (r < 0) {
+      return r;
+    }
+
+    if (ictx->event_socket.is_valid())
+      return -EINVAL;
+    return ictx->event_socket.init(fd, type);
   }
 
   int is_exclusive_lock_owner(ImageCtx *ictx, bool *is_owner)
@@ -3407,6 +3423,23 @@ reprotect_and_return_err:
 
     ictx->perfcounter->inc(l_librbd_aio_wr);
     ictx->perfcounter->inc(l_librbd_aio_wr_bytes, clip_len);
+  }
+
+  int poll_io_events(ImageCtx *ictx, AioCompletion **comps, int numcomp, int max)
+  {
+    if (numcomp < max || numcomp <= 0)
+      return -EINVAL;
+    CephContext *cct = ictx->cct;
+    ldout(cct, 20) << __func__ << " " << ictx << " numcomp = " << numcomp << " max " << max << dendl;
+    int i = 0;
+    Mutex::Locker l(ictx->completed_reqs_lock);
+    while (i < max) {
+      if (ictx->completed_reqs.empty())
+        break;
+      comps[i++] = ictx->completed_reqs.front();
+      ictx->completed_reqs.pop_front();
+    }
+    return i;
   }
 
   int metadata_get(ImageCtx *ictx, const string &key, string *value)
