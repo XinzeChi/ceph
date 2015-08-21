@@ -250,6 +250,8 @@ namespace librbd {
     void aware_metadata(string prefix, map<string, bufferlist> &metadata);
     bool io_limits_intercept(AioRequest *req, bool is_write);
     void process_throttle_req(bool is_write);
+
+    void clear_pending_completions();
   };
 }
 

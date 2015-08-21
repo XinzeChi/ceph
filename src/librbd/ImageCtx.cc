@@ -11,6 +11,7 @@
 #include "common/WorkQueue.h"
 
 #include "librbd/AioRequest.h"
+#include "librbd/AioCompletion.h"
 #include "librbd/AsyncOperation.h"
 #include "librbd/AsyncRequest.h"
 #include "librbd/AsyncResizeRequest.h"
@@ -865,6 +866,20 @@ public:
       async_requests_cond.Wait(async_ops_lock);
     }
   }
+
+  void ImageCtx::clear_pending_completions() {
+    Mutex::Locker l(completed_reqs_lock);
+    ldout(cct, 10) << "clear pending AioCompletion: count="
+                   << completed_reqs.size() << dendl;
+
+    for (xlist<AioCompletion*>::iterator it = completed_reqs.begin();
+         !it.end(); ++it) {
+      ldout(cct, 10) << "clear pending AioCompletion: " << *it << dendl;
+      (*it)->set_event_notify(false);
+    }
+    completed_reqs.clear();
+  }
+
 
   bool ImageCtx::_filter_metadata_confs(const string &prefix, map<string, bool> &configs,
                                         map<string, bufferlist> &pairs, map<string, bufferlist> *res) {

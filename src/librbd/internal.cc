@@ -2507,6 +2507,7 @@ reprotect_and_return_err:
     ictx->aio_work_queue->drain();
 
     ictx->cancel_async_requests();
+    ictx->clear_pending_completions();
     ictx->readahead.wait_for_pending();
     if (ictx->object_cacher) {
       ictx->shutdown_cache(); // implicitly flushes
