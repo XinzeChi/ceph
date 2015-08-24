@@ -1195,6 +1195,10 @@ static simple_spinlock_t buffer_debug_lock = SIMPLE_SPINLOCK_INITIALIZER;
 
   void buffer::list::rebuild()
   {
+    if (_len == 0) {
+      _buffers.clear();
+      return;
+    }
     ptr nb;
     if ((_len & ~CEPH_PAGE_MASK) == 0)
       nb = buffer::create_page_aligned(_len);
@@ -1214,7 +1218,8 @@ static simple_spinlock_t buffer_debug_lock = SIMPLE_SPINLOCK_INITIALIZER;
     }
     _memcopy_count += pos;
     _buffers.clear();
-    _buffers.push_back(nb);
+    if (nb.length())
+      _buffers.push_back(nb);
   }
 
 void buffer::list::rebuild_aligned(unsigned align)
