@@ -74,10 +74,8 @@ static ostream &operator<<(
 ostream &operator<<(ostream &lhs, const ECBackend::read_request_t &rhs)
 {
   return lhs << "read_request_t(to_read=[" << rhs.to_read << "]"
-	     << ", need=" << rhs.shard_read
+	     << ", shard_read=" << rhs.shard_read
 	     << ", want_attrs=" << rhs.want_attrs
-	     << ", direct_fast_read=" << rhs.direct_fast_read
-	     << ", origin_to_read=[" << rhs.origin_to_read << "]"
 	     << ")";
 }
 
@@ -91,7 +89,7 @@ ostream &operator<<(ostream &lhs, const ECBackend::read_result_t &rhs)
     lhs << ", noattrs";
   }
   lhs << ", returned=" << rhs.returned;
-  return lhs << ", direct_fast_read=" << rhs.direct_fast_read;
+  return lhs << ", shard_read=" << rhs.shard_read;
 }
 
 ostream &operator<<(ostream &lhs, const ECBackend::ReadOp &rhs)
@@ -220,22 +218,22 @@ struct RecoveryMessages {
     const set<pg_shard_t> &need,
     bool attrs) {
     list<boost::tuple<uint64_t, uint64_t, uint32_t> > to_read;
-    list<bool> direct_fast_read;
     to_read.push_back(boost::make_tuple(off, len, 0));
-    list<list<boost::tuple<pg_shard_t, uint64_t, uint64_t> > > to_need;
-    list<boost::tuple<uint64_t, uint64_t, uint32_t> > origial_to_read;
+
+    list<pair<list<boost::tuple<pg_shard_t, uint64_t, uint64_t> >,
+              bool> > to_need;
+    // do not direct fast read
     for (list<boost::tuple<uint64_t, uint64_t, uint32_t> >::const_iterator i = to_read.begin();
         i != to_read.end();
         ++i) {
-      origial_to_read.push_back(*i);
       list<boost::tuple<pg_shard_t, uint64_t, uint64_t> > shard_read;
       pair<uint64_t, uint64_t> chunk_off_len =
         ec->sinfo.aligned_offset_len_to_chunk(make_pair(i->get<0>(), i->get<1>()));
+      // assign read offset and then to shards, all shards have the same read offset and len
       for (set<pg_shard_t>::const_iterator j = need.begin(); j != need.end(); ++j) {
         shard_read.push_back(boost::make_tuple(*j, chunk_off_len.first, chunk_off_len.second));
       }
-      to_need.push_back(shard_read);
-      direct_fast_read.push_back(false);
+      to_need.push_back(make_pair(shard_read, false));
     }
     assert(!reads.count(hoid));
     reads.insert(
@@ -247,9 +245,7 @@ struct RecoveryMessages {
 	  attrs,
 	  new OnRecoveryReadComplete(
 	    ec,
-	    hoid),
-          direct_fast_read,
-          origial_to_read)));
+	    hoid))));
   }
 
   map<pg_shard_t, vector<PushOp> > pushes;
@@ -1595,16 +1591,16 @@ void ECBackend::start_read_op(
       uint64_t, uint64_t, map<pg_shard_t, bufferlist> > > &reslist =
       op.complete[i->first].returned;
     op.complete[i->first].shard_read = i->second.shard_read;
-    op.complete[i->first].direct_fast_read = i->second.direct_fast_read;
     bool need_attrs = i->second.want_attrs;
     set<pg_shard_t> shards;
-    for (list<list<boost::tuple<pg_shard_t, uint64_t, uint64_t> > >::const_iterator j = i->second.shard_read.begin();
+    for (list<pair<list<boost::tuple<pg_shard_t, uint64_t, uint64_t> >,
+                   bool> >::const_iterator j = i->second.shard_read.begin();
          j != i->second.shard_read.end();
          ++j) {
-      for (list<boost::tuple<pg_shard_t, uint64_t, uint64_t> >::const_iterator k = j->begin();
-	   k != j->end();
+      for (list<boost::tuple<pg_shard_t, uint64_t, uint64_t> >::const_iterator k = j->first.begin();
+	   k != j->first.end();
 	   ++k) {
-       shards.insert(k->get<0>());
+        shards.insert(k->get<0>());
       }
     }
     for (set<pg_shard_t>::const_iterator j = shards.begin();
@@ -1619,17 +1615,18 @@ void ECBackend::start_read_op(
     }
     assert(i->second.to_read.size() == i->second.shard_read.size());
     list<boost::tuple<uint64_t, uint64_t, uint32_t> >::const_iterator j = i->second.to_read.begin();
-    list<list<boost::tuple<pg_shard_t, uint64_t, uint64_t> > >::const_iterator t = i->second.shard_read.begin();
-    for (; j != i->second.to_read.end() && t != i->second.shard_read.end();
-	 ++j, ++t) {
+    list<pair<list<boost::tuple<pg_shard_t, uint64_t, uint64_t> >,
+              bool> >::const_iterator slit = i->second.shard_read.begin();
+    for (; j != i->second.to_read.end() && slit != i->second.shard_read.end();
+	 ++j, ++slit) {
       reslist.push_back(
 	boost::make_tuple(
 	  j->get<0>(),
 	  j->get<1>(),
 	  map<pg_shard_t, bufferlist>()));
       
-      for (list<boost::tuple<pg_shard_t, uint64_t, uint64_t> >::const_iterator k = t->begin();
-	   k != t->end();
+      for (list<boost::tuple<pg_shard_t, uint64_t, uint64_t> >::const_iterator k = slit->first.begin();
+	   k != slit->first.end();
 	   ++k) {
 	messages[k->get<0>()].to_read[i->first].push_back(boost::make_tuple(k->get<1>(),
 								    k->get<2>(),
@@ -1677,20 +1674,20 @@ void ECBackend::start_remaining_read_op(
        i != op.to_read.end();
        ++i) {
     op.complete[i->first].shard_read = i->second.shard_read;
-    op.complete[i->first].direct_fast_read = i->second.direct_fast_read;
     bool need_attrs = i->second.want_attrs;
-    set<pg_shard_t> shard_read;
-    for (list<list<boost::tuple<pg_shard_t, uint64_t, uint64_t> > >::const_iterator j = i->second.shard_read.begin();
+    set<pg_shard_t> shards;
+    for (list<pair<list<boost::tuple<pg_shard_t, uint64_t, uint64_t> >,
+                   bool> >::const_iterator j = i->second.shard_read.begin();
          j != i->second.shard_read.end();
          ++j) {
-      for (list<boost::tuple<pg_shard_t, uint64_t, uint64_t> >::const_iterator k = j->begin();
-	   k != j->end();
+      for (list<boost::tuple<pg_shard_t, uint64_t, uint64_t> >::const_iterator k = j->first.begin();
+	   k != j->first.end();
 	   ++k) {
-       shard_read.insert(k->get<0>());
+       shards.insert(k->get<0>());
       }
     }
-    for (set<pg_shard_t>::const_iterator j = shard_read.begin();
-	 j != shard_read.end();
+    for (set<pg_shard_t>::const_iterator j = shards.begin();
+	 j != shards.end();
 	 ++j) {
       if (need_attrs) {
 	messages[*j].attrs_to_read.insert(i->first);
@@ -1701,12 +1698,13 @@ void ECBackend::start_remaining_read_op(
     }
     assert(i->second.to_read.size() == i->second.shard_read.size());
     list<boost::tuple<uint64_t, uint64_t, uint32_t> >::const_iterator j = i->second.to_read.begin();
-    list<list<boost::tuple<pg_shard_t, uint64_t, uint64_t> > >::const_iterator t = i->second.shard_read.begin();
-    for (; j != i->second.to_read.end() && t != i->second.shard_read.end();
-	 ++j, ++t) {
+    list<pair<list<boost::tuple<pg_shard_t, uint64_t, uint64_t> >,
+              bool> >::const_iterator slit = i->second.shard_read.begin();
+    for (; j != i->second.to_read.end() && slit != i->second.shard_read.end();
+	 ++j, ++slit) {
       
-      for (list<boost::tuple<pg_shard_t, uint64_t, uint64_t> >::const_iterator k = t->begin();
-	   k != t->end();
+      for (list<boost::tuple<pg_shard_t, uint64_t, uint64_t> >::const_iterator k = slit->first.begin();
+	   k != slit->first.end();
 	   ++k) {
 	messages[k->get<0>()].to_read[i->first].push_back(boost::make_tuple(k->get<1>(),
 								    k->get<2>(),
@@ -1898,27 +1896,25 @@ struct CallClientContexts :
     : ec(ec), status(status), to_read(to_read) {}
   void finish(pair<RecoveryMessages *, ECBackend::read_result_t &> &in) {
     ECBackend::read_result_t &res = in.second;
-    list<bool>::const_iterator it = res.direct_fast_read.begin();
-    list<list<boost::tuple<pg_shard_t, uint64_t, uint64_t> > >::const_iterator nj =
-      res.shard_read.begin();
+    list<pair<list<boost::tuple<pg_shard_t, uint64_t, uint64_t> >,
+              bool> >::const_iterator nj = res.shard_read.begin();
     if (res.r != 0)
       goto out;
     assert(res.returned.size() == to_read.size());
     assert(res.r == 0);
     assert(res.errors.empty());
-    assert(to_read.size() == res.direct_fast_read.size());
     assert(to_read.size() == res.shard_read.size());
 
     for (list<pair<boost::tuple<uint64_t, uint64_t, uint32_t>,
 		   pair<bufferlist*, Context*> > >::iterator i = to_read.begin();
-	 i != to_read.end() && it != res.direct_fast_read.end() && nj != res.shard_read.end();
-	 to_read.erase(i++), ++it, ++nj) {
+	 i != to_read.end() && nj != res.shard_read.end();
+	 to_read.erase(i++), ++nj) {
           
-      if (*it) { // whether this op is send to partial shards
+      if (nj->second) { // this op is direct fast read, just append the bufferlist
         bufferlist bl;
         for(list<boost::tuple<pg_shard_t, uint64_t, uint64_t> >::const_iterator j =
-            nj->begin();
-            j != nj->end();
+            nj->first.begin();
+            j != nj->first.end();
             ++j) {
           bl.append(res.returned.front().get<2>()[j->get<0>()]);
         }
@@ -1982,8 +1978,11 @@ out:
 
 bool ECBackend::could_do_direct_fast_read(uint64_t offset, uint64_t len, bool fast_read)
 {
-  if (fast_read)
+  //if len == 0, it means read the left whole objects from offset
+  if (fast_read || len == 0)
     return false; 
+  // if the read len if small than a stripe, and the number of direct fast shards
+  // not more than acting size
   if ((offset % sinfo.get_chunk_size() == 0 &&
         len <= sinfo.get_stripe_width()) ||
       (len <= (sinfo.get_stripe_width() - sinfo.get_chunk_size()))) {
@@ -2018,20 +2017,18 @@ void ECBackend::objects_read_async(
 
   const vector<int> &chunk_mapping = ec_impl->get_chunk_mapping();
   list<boost::tuple<uint64_t, uint64_t, uint32_t> > offsets;
-  pair<uint64_t, uint64_t> read_offset_len;
-  list<list<boost::tuple<pg_shard_t, uint64_t, uint64_t> > > to_need;
-  list<bool> direct_fast_read;
-  list<boost::tuple<uint64_t, uint64_t, uint32_t> > origial_to_read;
+  list<pair<list<boost::tuple<pg_shard_t, uint64_t, uint64_t> >,
+            bool> > to_need;
   for (list<pair<boost::tuple<uint64_t, uint64_t, uint32_t>,
 		 pair<bufferlist*, Context*> > >::const_iterator i =
 	 to_read.begin();
        i != to_read.end();
        ++i) {
-    origial_to_read.push_back(i->first);
     list<boost::tuple<pg_shard_t, uint64_t, uint64_t> > shard_read;
     dout(20) << __func__ << " async read offset " << i->first.get<0>() <<
                " length " << i->first.get<1>() << dendl;
-    read_offset_len = sinfo.offset_len_to_stripe_bounds(make_pair(i->first.get<0>(), i->first.get<1>()));
+    pair<uint64_t, uint64_t> read_offset_len =
+      sinfo.offset_len_to_stripe_bounds(make_pair(i->first.get<0>(), i->first.get<1>()));
     offsets.push_back(boost::make_tuple(read_offset_len.first, read_offset_len.second, i->first.get<2>()));
     if (could_do_direct_fast_read(i->first.get<0>(), i->first.get<1>(), fast_read)) {
       set<int> have;
@@ -2040,7 +2037,7 @@ void ECBackend::objects_read_async(
 
       uint64_t offset = i->first.get<0>();
       uint64_t len_left = i->first.get<1>();
-      bool partial = true;
+      bool direct_read = true;
       do {
         uint64_t chunk_offset = sinfo.logical_to_chunk_offset(offset);
         uint64_t shard = offset % sinfo.get_stripe_width() / sinfo.get_chunk_size();
@@ -2052,15 +2049,15 @@ void ECBackend::objects_read_async(
           len_left -= r_len;
           offset = offset + r_len;
         } else { // return back to full reconstruct read
-          partial = false;
+          direct_read = false;
           shard_read.clear();
           break;
         }
       } while(len_left > 0);
-      if (partial) {
+      if (direct_read) {
         assert(shard_read.size() <= ec_impl->get_data_chunk_count());
-        to_need.push_back(shard_read);
-        direct_fast_read.push_back(true);
+        //direct fast read
+        to_need.push_back(make_pair(shard_read, true));
         continue;
       }
     }
@@ -2069,8 +2066,7 @@ void ECBackend::objects_read_async(
     for (set<pg_shard_t>::const_iterator j = shards.begin(); j != shards.end(); ++j) {
       shard_read.push_back(boost::make_tuple(*j, chunk_off_len.first, chunk_off_len.second));
     }
-    to_need.push_back(shard_read);
-    direct_fast_read.push_back(false);
+    to_need.push_back(make_pair(shard_read, false));
   }
 
   map<hobject_t, read_request_t, hobject_t::BitwiseComparator> for_read_op;
@@ -2081,9 +2077,7 @@ void ECBackend::objects_read_async(
 	offsets,
 	to_need,
 	false,
-	c,
-        direct_fast_read,
-       origial_to_read)));
+        c)));
 
   start_read_op(
     cct->_conf->osd_client_op_priority,
@@ -2095,10 +2089,11 @@ void ECBackend::objects_read_async(
 
 bool ECBackend::direct_fast_read_for_op(const read_request_t &req)
 {
-  for (list<bool>::const_iterator it = req.direct_fast_read.begin();
-    it != req.direct_fast_read.end();
+  for (list<pair<list<boost::tuple<pg_shard_t, uint64_t, uint64_t> >,
+                 bool> >::const_iterator it = req.shard_read.begin();
+    it != req.shard_read.end();
     ++it) {
-    if (*it)
+    if (it->second)
       return true;
   }
   return false;
@@ -2137,26 +2132,21 @@ int ECBackend::objects_remaining_read_async(
   dout(10) << __func__ << " Read remaining shards " << shards << dendl;
 
   GenContext<pair<RecoveryMessages *, read_result_t& > &> *c = rop.to_read.find(hoid)->second.cb;
-  list<boost::tuple<uint64_t, uint64_t, uint32_t> > origial_to_read =
-    rop.to_read.find(hoid)->second.origin_to_read;
-  list<boost::tuple<uint64_t, uint64_t, uint32_t> > offsets; 
-  list<list<boost::tuple<pg_shard_t, uint64_t, uint64_t> > > to_need;
-  list<bool> direct_fast_read;
+  const list<boost::tuple<uint64_t, uint64_t, uint32_t> > &to_read =
+    rop.to_read.find(hoid)->second.to_read;
+  list<pair<list<boost::tuple<pg_shard_t, uint64_t, uint64_t> >,
+            bool> > to_need;
   list<boost::tuple<pg_shard_t, uint64_t, uint64_t> > shard_read;
   for (list<boost::tuple<uint64_t, uint64_t, uint32_t> >::const_iterator i =
-         origial_to_read.begin();
-       i != origial_to_read.end();
+         to_read.begin();
+       i != to_read.end();
        ++i) {
-    pair<uint64_t, uint64_t> read_offset_len =
-      sinfo.offset_len_to_stripe_bounds(make_pair(i->get<0>(), i->get<1>()));
-    offsets.push_back(boost::make_tuple(read_offset_len.first, read_offset_len.second, i->get<2>()));
     pair<uint64_t, uint64_t> chunk_off_len =
-      sinfo.aligned_offset_len_to_chunk(make_pair(read_offset_len.first, read_offset_len.second));
+      sinfo.aligned_offset_len_to_chunk(make_pair(i->get<0>(), i->get<1>()));
     for (set<pg_shard_t>::const_iterator j = shards.begin(); j != shards.end(); ++j) {
       shard_read.push_back(boost::make_tuple(*j, chunk_off_len.first, chunk_off_len.second));
     }
-    to_need.push_back(shard_read);
-    direct_fast_read.push_back(false);
+    to_need.push_back(make_pair(shard_read, false));
   }
 
   map<hobject_t, read_request_t, hobject_t::BitwiseComparator> for_read_op;
@@ -2164,12 +2154,10 @@ int ECBackend::objects_remaining_read_async(
     make_pair(
       hoid,
       read_request_t(
-        offsets,
+        to_read,
 	to_need,
 	false,
-	c,
-        direct_fast_read,
-        origial_to_read)));
+	c)));
 
   start_remaining_read_op(rop, for_read_op);
   return 0;

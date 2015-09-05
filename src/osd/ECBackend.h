@@ -271,26 +271,27 @@ public:
     list<
       boost::tuple<
 	uint64_t, uint64_t, map<pg_shard_t, bufferlist> > > returned;
-    list<list<boost::tuple<pg_shard_t, uint64_t, uint64_t> > > shard_read;
-    list<bool> direct_fast_read;
+    list<pair<list<boost::tuple<pg_shard_t, uint64_t, uint64_t> >,
+              bool> > shard_read;
     read_result_t() : r(0) {}
   };
   struct read_request_t {
     const list<boost::tuple<uint64_t, uint64_t, uint32_t> > to_read;
-    const list<list<boost::tuple<pg_shard_t, uint64_t, uint64_t> > > shard_read;
+    // the bool variable in inner list means whether the op is direct fast
+    // read or full reconstruct read we use the inner list which must be in
+    // order of increasing offset. so when read op complete, wo could just
+    // append the bufferst using the inner list
+    const list<pair<list<boost::tuple<pg_shard_t, uint64_t, uint64_t> >,
+                    bool> > shard_read;
     const bool want_attrs;
     GenContext<pair<RecoveryMessages *, read_result_t& > &> *cb;
-    const list<bool> direct_fast_read;
-    const list<boost::tuple<uint64_t, uint64_t, uint32_t> > origin_to_read;
     read_request_t(
       const list<boost::tuple<uint64_t, uint64_t, uint32_t> > &to_read,
-      const list<list<boost::tuple<pg_shard_t, uint64_t, uint64_t> > > &shard_read,
+      const list<pair<list<boost::tuple<pg_shard_t, uint64_t, uint64_t> >, bool> > &shard_read,
       bool want_attrs,
-      GenContext<pair<RecoveryMessages *, read_result_t& > &> *cb,
-      const list<bool> r,
-      const list<boost::tuple<uint64_t, uint64_t, uint32_t> > origin_to_read)
+      GenContext<pair<RecoveryMessages *, read_result_t& > &> *cb)
       : to_read(to_read), shard_read(shard_read), want_attrs(want_attrs),
-	cb(cb), direct_fast_read(r), origin_to_read(origin_to_read) {}
+	cb(cb) {}
   };
   friend ostream &operator<<(ostream &lhs, const read_request_t &rhs);
 
@@ -342,7 +343,7 @@ public:
    * Client writes
    *
    * ECTransaction is responsible for generating a transaction for
-   * each shard to which we shard_read to send the write.  As required
+   * each shard to which we need to send the write.  As required
    * by the PGBackend interface, the ECBackend write mechanism
    * passes trim information with the write and last_complete back
    * with the reply.
