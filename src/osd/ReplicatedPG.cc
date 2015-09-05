@@ -1750,6 +1750,10 @@ void ReplicatedPG::do_op(OpRequestRef& op)
   ctx->src_obc = src_obc;
 
   execute_ctx(ctx);
+
+  utime_t prepare_latency = ceph_clock_now(g_ceph_context);
+  prepare_latency -= op->get_dequeued_time();
+  osd->logger->tinc(l_osd_op_prepare_lat, prepare_latency);
 }
 
 bool ReplicatedPG::maybe_handle_cache(OpRequestRef op,

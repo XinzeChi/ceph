@@ -2101,6 +2101,7 @@ void OSD::create_logger()
   osd_plb.add_u64_counter(l_osd_op_outb,  "op_out_bytes");      // client op out bytes (reads)
   osd_plb.add_time_avg(l_osd_op_lat,   "op_latency");       // client op latency
   osd_plb.add_time_avg(l_osd_op_process_lat, "op_process_latency");   // client op process latency
+  osd_plb.add_time_avg(l_osd_op_prepare_lat, "op_prepare_latency");   // client op prepare latency
 
   osd_plb.add_u64_counter(l_osd_op_r,      "op_r");        // client reads
   osd_plb.add_u64_counter(l_osd_op_r_outb, "op_r_out_bytes");   // client read out bytes
