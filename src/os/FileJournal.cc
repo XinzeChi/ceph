@@ -1333,7 +1333,6 @@ void FileJournal::do_aio_write(bufferlist& bl)
  */
 int FileJournal::write_aio_bl(off64_t& pos, bufferlist& bl, uint64_t seq)
 {
-  Mutex::Locker locker(aio_lock);
   align_bl(pos, bl);
 
   dout(20) << "write_aio_bl " << pos << "~" << bl.length() << " seq " << seq << dendl;
@@ -1355,6 +1354,7 @@ int FileJournal::write_aio_bl(off64_t& pos, bufferlist& bl, uint64_t seq)
     bufferlist tbl;
     bl.splice(0, len, &tbl);  // move bytes from bl -> tbl
 
+    aio_lock.Lock();
     aio_queue.push_back(aio_info(tbl, pos, bl.length() > 0 ? 0 : seq));
     aio_info& aio = aio_queue.back();
     aio.iov = iov;
@@ -1366,6 +1366,8 @@ int FileJournal::write_aio_bl(off64_t& pos, bufferlist& bl, uint64_t seq)
 
     aio_num++;
     aio_bytes += aio.len;
+    uint64_t cur_len = aio.len;
+    aio_lock.Unlock();
 
     iocb *piocb = &aio.iocb;
     int attempts = 10;
@@ -1381,9 +1383,11 @@ int FileJournal::write_aio_bl(off64_t& pos, bufferlist& bl, uint64_t seq)
 	assert(0 == "io_submit got unexpected error");
       }
     } while (false);
-    pos += aio.len;
+    pos += cur_len;
   }
+  aio_lock.Lock();
   write_finish_cond.Signal();
+  aio_lock.Unlock();
   return 0;
 }
 #endif
