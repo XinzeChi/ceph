@@ -160,6 +160,43 @@ void ObjectDesc::update(ContentsGenerator *gen, const ContDesc &next) {
   return;
 }
 
+bool ObjectDesc::check(bufferlist &to_check, pair<uint64_t, uint64_t> &offset_len) {
+  iterator i = begin();
+  uint64_t offset = offset_len.first;
+  for (; !i.end(); ++i) {
+    if (offset == 0)
+      break; 
+    offset--;
+  }
+
+  if (i.end() && offset != 0) {
+    std::cout << "reached end of iterator first, offset = " << offset << std::endl;
+    return false;
+  }
+
+  uint64_t pos = offset_len.first;
+  for (bufferlist::iterator p = to_check.begin();
+       !p.end();
+       ++p, ++i, ++pos) {
+    if (i.end()) {
+      std::cout << "reached end of iterator first" << std::endl;
+      return false;
+    }
+    if (*i != *p) {
+      std::cout << "incorrect buffer at pos " << pos << std::endl;
+      return false;
+    }
+  }
+ 
+  uint64_t size = layers.empty() ? 0 :
+    most_recent_gen()->get_length(most_recent());
+  if (pos > size) {
+    std::cout << "only read " << pos << " out of size " << size << std::endl;
+    return false;
+  }
+  return true;
+}
+
 bool ObjectDesc::check(bufferlist &to_check) {
   iterator i = begin();
   uint64_t pos = 0;
