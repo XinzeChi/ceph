@@ -462,7 +462,7 @@ void ECBackend::handle_recovery_read_complete(
     from[shard].swap(bl);
   }
 
-  assert((min_chunk_size != ((uint64_t) - 1)) && min_chunk_size);
+  assert(min_chunk_size != ((uint64_t) - 1));
 
   for (map<int, bufferlist>::iterator it = from.begin(); it != from.end(); ++it) {
     bufferlist bl;
