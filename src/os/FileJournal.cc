@@ -374,7 +374,10 @@ int FileJournal::create()
 
   // write empty header
   header = header_t();
-  header.flags = header_t::FLAG_CRC;  // enable crcs on any new journal.
+  if (g_conf->filestore_journal_crc)
+    header.flags = header_t::FLAG_CRC;  // enable crcs on any new journal.
+  else
+    header.flags = 0;
   header.fsid = fsid;
   header.max_size = max_size;
   header.block_size = block_size;
@@ -919,7 +922,10 @@ int FileJournal::prepare_single_write(bufferlist& bl, off64_t& queue_pos, uint64
   h.len = ebl.length();
   h.post_pad = post_pad;
   h.make_magic(queue_pos, header.get_fsid64());
-  h.crc32c = ebl.crc32c(0);
+  if (header.flags & header_t::FLAG_CRC)
+    h.crc32c = ebl.crc32c(0);
+  else
+    h.crc32c = 0;
 
   bl.append((const char*)&h, sizeof(h));
   if (pre_pad) {
