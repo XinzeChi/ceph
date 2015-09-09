@@ -118,6 +118,26 @@ public:
                                 caches(g_conf->filestore_omap_header_cache_size)
     {}
 
+  KeyValueDB::Transaction get_transaction() { return db->get_transaction(); }
+  int prepare_set_keys(
+    KeyValueDB::Transaction t,
+    const ghobject_t &oid,
+    const map<string, bufferlist> &set,
+    const SequencerPosition *spos=0
+    ) {
+    MapHeaderLock hl(this, oid);
+    Header header = lookup_create_map_header(hl, oid, t);
+    if (!header)
+      return -EINVAL;
+      if (check_spos(oid, header, spos))
+        return 0;
+    t->set(user_prefix(header), set);
+    return 0;
+  }
+  int submit_transaction(KeyValueDB::Transaction t) {
+    return db->submit_transaction(t);
+  }
+
   int set_keys(
     const ghobject_t &oid,
     const map<string, bufferlist> &set,

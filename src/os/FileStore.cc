@@ -493,12 +493,18 @@ int FileStore::lfn_unlink(coll_t cid, const ghobject_t& o,
       }
       wbthrottle.clear_object(o); // should be only non-cache ref
       fdcache.clear(o);
+      if (o.is_pgmeta()) {
+        pgmeta_cache.erase_pgmeta_key(o);
+      }
     } else {
       /* Ensure that replay of this op doesn't result in the object_map
        * going away.
        */
-      if (!backend->can_checkpoint())
-	object_map->sync(&o, &spos);
+      if (!backend->can_checkpoint()) {
+        if (o.is_pgmeta())
+          pgmeta_cache.submit_pgmeta_keys(o);
+ 	object_map->sync(&o, &spos);
+      }
     }
   }
   r = index->unlink(o);
@@ -519,6 +525,8 @@ FileStore::FileStore(const std::string &base, const std::string &jdev, osflagbit
   basedir_fd(-1), current_fd(-1),
   backend(NULL),
   index_manager(do_update),
+  pgmeta_cache(this, g_conf->filestore_pgmeta_cache_shards,
+               g_conf->filestore_pgmeta_cache_shard_bytes),
   ondisk_finisher(g_ceph_context),
   lock("FileStore::lock"),
   force_sync(false), 
@@ -528,9 +536,10 @@ FileStore::FileStore(const std::string &base, const std::string &jdev, osflagbit
   fdcache(g_ceph_context),
   wbthrottle(g_ceph_context),
   default_osr("default"),
+  next_osr_id(0),
   op_queue_len(0), op_queue_bytes(0),
   op_throttle_lock("FileStore::op_throttle_lock"),
-  op_finisher(g_ceph_context),
+  op_finisher_num(g_conf->filestore_op_finisher_threads),
   op_tp(g_ceph_context, "FileStore::op_tp", g_conf->filestore_op_threads, "filestore_op_threads"),
   op_wq(this, g_conf->filestore_op_thread_timeout,
 	g_conf->filestore_op_thread_suicide_timeout, &op_tp),
@@ -565,6 +574,10 @@ FileStore::FileStore(const std::string &base, const std::string &jdev, osflagbit
   m_filestore_max_inline_xattrs(0)
 {
   m_filestore_kill_at.set(g_conf->filestore_kill_at);
+  for (int i = 0; i < op_finisher_num; ++i) {
+    Finisher *f = new Finisher(g_ceph_context);
+    op_finishers.push_back(f);
+  }
 
   ostringstream oss;
   oss << basedir << "/current";
@@ -590,6 +603,7 @@ FileStore::FileStore(const std::string &base, const std::string &jdev, osflagbit
   plb.add_time_avg(l_os_j_lat, "journal_latency");
   plb.add_u64_counter(l_os_j_wr, "journal_wr");
   plb.add_u64_avg(l_os_j_wr_bytes, "journal_wr_bytes");
+  plb.add_u64_counter(l_os_omap_cache_shard_flush, "omap_cache_shard_flush");
   plb.add_u64(l_os_oq_max_ops, "op_queue_max_ops");
   plb.add_u64(l_os_oq_ops, "op_queue_ops");
   plb.add_u64_counter(l_os_ops, "ops");
@@ -1598,7 +1612,9 @@ int FileStore::mount()
   journal_start();
 
   op_tp.start();
-  op_finisher.start();
+  for (vector<Finisher*>::iterator it = op_finishers.begin(); it != op_finishers.end(); ++it) {
+    (*it)->start();
+  }
   ondisk_finisher.start();
 
   timer.init();
@@ -1648,7 +1664,9 @@ int FileStore::umount()
   if (!(generic_flags & SKIP_JOURNAL_REPLAY))
     journal_write_close();
 
-  op_finisher.stop();
+  for (vector<Finisher*>::iterator it = op_finishers.begin(); it != op_finishers.end(); ++it) {
+    (*it)->stop();
+  }
   ondisk_finisher.stop();
 
   if (fsid_fd >= 0) {
@@ -1828,10 +1846,10 @@ void FileStore::_finish_op(OpSequencer *osr)
     o->onreadable_sync->complete(0);
   }
   if (o->onreadable) {
-    op_finisher.queue(o->onreadable);
+    op_finishers[osr->id % op_finisher_num]->queue(o->onreadable);
   }
   if (!to_queue.empty()) {
-    op_finisher.queue(to_queue);
+    op_finishers[osr->id % op_finisher_num]->queue(to_queue);
   }
   delete o;
 }
@@ -1875,7 +1893,7 @@ int FileStore::queue_transactions(Sequencer *posr, list<Transaction*> &tls,
     osr = static_cast<OpSequencer *>(posr->p);
     dout(5) << "queue_transactions existing " << *osr << "/" << osr->parent << dendl; //<< " w/ q " << osr->q << dendl;
   } else {
-    osr = new OpSequencer;
+    osr = new OpSequencer(next_osr_id++);
     osr->parent = posr;
     posr->p = osr;
     dout(5) << "queue_transactions new " << *osr << "/" << osr->parent << dendl;
@@ -1965,7 +1983,7 @@ int FileStore::queue_transactions(Sequencer *posr, list<Transaction*> &tls,
   if (onreadable_sync) {
     onreadable_sync->complete(r);
   }
-  op_finisher.queue(onreadable, r);
+  op_finishers[osr->id % op_finisher_num]->queue(onreadable, r);
 
   submit_manager.op_submit_finish(op);
   apply_manager.op_apply_finish(op);
@@ -2127,6 +2145,8 @@ void FileStore::_set_replay_guard(int fd,
   // sync object_map too.  even if this object has a header or keys,
   // it have had them in the past and then removed them, so always
   // sync.
+  if (hoid && hoid->is_pgmeta())
+    pgmeta_cache.submit_pgmeta_keys(*hoid);
   object_map->sync(hoid, &spos);
 
   _inject_failure();
@@ -3149,6 +3169,11 @@ int FileStore::_clone(coll_t cid, const ghobject_t& oldoid, const ghobject_t& ne
     }
 
     dout(20) << "objectmap clone" << dendl;
+    if (oldoid.is_pgmeta()) {
+      r = pgmeta_cache.submit_pgmeta_keys(oldoid);
+      if (r < 0)
+        goto out3;
+    }
     r = object_map->clone(oldoid, newoid, &spos);
     if (r < 0 && r != -ENOENT)
       goto out3;
@@ -3558,7 +3583,17 @@ void FileStore::sync_entry()
 	apply_manager.commit_started();
 	op_tp.unpause();
 
-	int err = backend->syncfs();
+        int err;
+        for (int idx = 0; idx < pgmeta_cache.pgmeta_shards; ++idx) {
+          err = pgmeta_cache.submit_shard(idx);
+          logger->inc(l_os_omap_cache_shard_flush);
+          if (err < 0) {
+            derr << "submit omap keys got " << cpp_strerror(err) << dendl;
+            assert(0 == "submit_shard returned error");
+          }
+        }
+        object_map->sync();
+	err = backend->syncfs();
 	if (err < 0) {
 	  derr << "syncfs got " << cpp_strerror(err) << dendl;
 	  assert(0 == "syncfs returned error");
@@ -3679,7 +3714,9 @@ void FileStore::_flush_op_queue()
   dout(10) << "_flush_op_queue draining op tp" << dendl;
   op_wq.drain();
   dout(10) << "_flush_op_queue waiting for apply finisher" << dendl;
-  op_finisher.wait_for_empty();
+  for (vector<Finisher*>::iterator it = op_finishers.begin(); it != op_finishers.end(); ++it) {
+    (*it)->wait_for_empty();
+  }
 }
 
 /*
@@ -4614,6 +4651,9 @@ int FileStore::omap_get(coll_t c, const ghobject_t &hoid,
     assert(!m_filestore_fail_eio || r != -EIO);
     return r;
   }
+  if (hoid.is_pgmeta()) {
+    pgmeta_cache.get_all(hoid, NULL, out);
+  }
   tracepoint(objectstore, omap_get_exit, 0);
   return 0;
 }
@@ -4668,6 +4708,9 @@ int FileStore::omap_get_keys(coll_t c, const ghobject_t &hoid, set<string> *keys
     assert(!m_filestore_fail_eio || r != -EIO);
     return r;
   }
+  if (hoid.is_pgmeta()) {
+    pgmeta_cache.get_all(hoid, keys, NULL);
+  }
   tracepoint(objectstore, omap_get_keys_exit, 0);
   return 0;
 }
@@ -4694,6 +4737,9 @@ int FileStore::omap_get_values(coll_t c, const ghobject_t &hoid,
   } else if (r < 0) {
     assert(!m_filestore_fail_eio || r != -EIO);
     return r;
+  }
+  if (hoid.is_pgmeta()) {
+    pgmeta_cache.get_by_keys(hoid, keys, NULL, out);
   }
   tracepoint(objectstore, omap_get_values_exit, 0);
   return 0;
@@ -4722,6 +4768,9 @@ int FileStore::omap_check_keys(coll_t c, const ghobject_t &hoid,
     assert(!m_filestore_fail_eio || r != -EIO);
     return r;
   }
+  if (hoid.is_pgmeta()) {
+    pgmeta_cache.get_by_keys(hoid, keys, out, NULL);
+  }
   tracepoint(objectstore, omap_check_keys_exit, 0);
   return 0;
 }
@@ -4740,6 +4789,10 @@ ObjectMap::ObjectMapIterator FileStore::get_omap_iterator(coll_t c,
     RWLock::RLocker l((index.index)->access_lock);
     r = lfn_find(hoid, index);
     if (r < 0)
+      return ObjectMap::ObjectMapIterator();
+  }
+  if (hoid.is_pgmeta()) {
+    if (pgmeta_cache.submit_pgmeta_keys(hoid) < 0)
       return ObjectMap::ObjectMapIterator();
   }
   return object_map->get_iterator(hoid);
@@ -4937,9 +4990,14 @@ int FileStore::_collection_move_rename(coll_t oldcid, const ghobject_t& oldoid,
 
     if (r == 0) {
       // the name changed; link the omap content
-      r = object_map->clone(oldoid, o, &spos);
-      if (r == -ENOENT)
-	r = 0;
+      if (oldoid.is_pgmeta()) {
+        r = pgmeta_cache.submit_pgmeta_keys(oldoid);
+      }
+      if (!r) {
+        r = object_map->clone(oldoid, o, &spos);
+        if (r == -ENOENT)
+          r = 0;
+      }
     }
 
     _inject_failure();
@@ -4991,6 +5049,9 @@ void FileStore::_inject_failure()
 int FileStore::_omap_clear(coll_t cid, const ghobject_t &hoid,
 			   const SequencerPosition &spos) {
   dout(15) << __func__ << " " << cid << "/" << hoid << dendl;
+  if (hoid.is_pgmeta()) {
+    pgmeta_cache.erase_pgmeta_key(hoid);
+  }
   int r = object_map->clear_keys_header(hoid, &spos);
   if (r == -ENOENT) {
     Index index;
@@ -5014,7 +5075,13 @@ int FileStore::_omap_setkeys(coll_t cid, const ghobject_t &hoid,
 			     const map<string, bufferlist> &aset,
 			     const SequencerPosition &spos) {
   dout(15) << __func__ << " " << cid << "/" << hoid << dendl;
-  int r = object_map->set_keys(hoid, aset, &spos);
+  int r = 0;
+  if (hoid.is_pgmeta() && !replaying) {
+    if (pgmeta_cache.set_keys(hoid, aset))
+      logger->inc(l_os_omap_cache_shard_flush);
+  } else {
+    r = object_map->set_keys(hoid, aset, &spos);
+  }
   if (r == -ENOENT) {
     Index index;
     r = get_index(cid, &index);
@@ -5040,7 +5107,11 @@ int FileStore::_omap_rmkeys(coll_t cid, const ghobject_t &hoid,
 			    const set<string> &keys,
 			    const SequencerPosition &spos) {
   dout(15) << __func__ << " " << cid << "/" << hoid << dendl;
-  int r = object_map->rm_keys(hoid, keys, &spos);
+  int r = 0;
+  if (hoid.is_pgmeta()) {
+    pgmeta_cache.erase_keys(hoid, keys);
+  }
+  r = object_map->rm_keys(hoid, keys, &spos);
   if (r == -ENOENT) {
     Index index;
     r = get_index(cid, &index);
@@ -5063,6 +5134,8 @@ int FileStore::_omap_rmkeyrange(coll_t cid, const ghobject_t &hoid,
 				const string& first, const string& last,
 				const SequencerPosition &spos) {
   dout(15) << __func__ << " " << cid << "/" << hoid << " [" << first << "," << last << "]" << dendl;
+  if (hoid.is_pgmeta())
+    pgmeta_cache.submit_pgmeta_keys(hoid);
   set<string> keys;
   {
     ObjectMap::ObjectMapIterator iter = get_omap_iterator(cid, hoid);

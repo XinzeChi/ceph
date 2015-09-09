@@ -57,6 +57,7 @@ enum {
   l_os_j_wr,
   l_os_j_wr_bytes,
   l_os_j_full,
+  l_os_omap_cache_shard_flush,
   l_os_fdcache,
   l_os_fdcache_hit,
   l_os_committing,

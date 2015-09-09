@@ -37,7 +37,8 @@ using namespace std;
 #include "common/Mutex.h"
 #include "HashIndex.h"
 #include "IndexManager.h"
-#include "ObjectMap.h"
+#include "DBObjectMap.h"
+#include "KeyValueDB.h"
 #include "SequencerPosition.h"
 #include "FDCache.h"
 #include "WBThrottle.h"
@@ -142,8 +143,124 @@ private:
   int init_index(coll_t c);
 
   // ObjectMap
-  boost::scoped_ptr<ObjectMap> object_map;
-  
+  boost::scoped_ptr<DBObjectMap> object_map;
+  struct PGMetaCache {
+    struct PGMetaShard {
+      Mutex pgmeta_shard_lock;
+      uint64_t bytes;
+      map<ghobject_t, map<string, bufferlist> > pgmeta_keys;
+      PGMetaShard(string name): pgmeta_shard_lock(name.c_str()), bytes(0) {}
+    };
+    FileStore *store;
+    const int pgmeta_shards;
+    vector<PGMetaShard*> shards;
+    uint64_t shard_bytes_limit;
+    void erase_pgmeta_key(const ghobject_t &hoid) {
+      int idx = hoid.hobj.get_hash() % pgmeta_shards;
+      Mutex::Locker l(shards[idx]->pgmeta_shard_lock);
+      shards[idx]->pgmeta_keys.erase(hoid);
+    }
+    int submit_pgmeta_keys(const ghobject_t &hoid) {
+      map<string, bufferlist> aset;
+      int idx = hoid.hobj.get_hash() % pgmeta_shards;
+      {
+        Mutex::Locker l(shards[idx]->pgmeta_shard_lock);
+        map<ghobject_t, map<string, bufferlist> >::iterator obj_it = shards[idx]->pgmeta_keys.find(hoid);
+        if (obj_it == shards[idx]->pgmeta_keys.end())
+          return 0;
+        obj_it->second.swap(aset);
+      }
+      return store->object_map->set_keys(hoid, aset, NULL);
+    }
+    int submit_shard(int idx) {
+      int err;
+      Mutex::Locker l(shards[idx]->pgmeta_shard_lock);
+      KeyValueDB::Transaction t = store->object_map->get_transaction();
+      map<ghobject_t, map<string, bufferlist> >::const_iterator end = shards[idx]->pgmeta_keys.end();
+      for (map<ghobject_t, map<string, bufferlist> >::const_iterator it = shards[idx]->pgmeta_keys.begin();
+           it != end; ++it) {
+        err = store->object_map->prepare_set_keys(t, it->first, it->second, NULL);
+        if (err < 0) {
+          return err;
+        }
+      }
+      err = store->object_map->submit_transaction(t);
+      shards[idx]->bytes = 0;
+      shards[idx]->pgmeta_keys.clear();
+      return err;
+    }
+    void get_all(const ghobject_t &hoid, set<string> *keys, map<string, bufferlist> *pairs) {
+      int idx = hoid.hobj.get_hash() % pgmeta_shards;
+      {
+        Mutex::Locker l(shards[idx]->pgmeta_shard_lock);
+        map<string, bufferlist> &obj_caches = shards[idx]->pgmeta_keys[hoid];
+        for (map<string, bufferlist>::iterator it = obj_caches.begin();
+             it != obj_caches.end(); ++it) {
+          if (pairs)
+            (*pairs)[it->first] = it->second;
+          if (keys)
+            keys->insert(it->first);
+        }
+      }
+    }
+    void get_by_keys(const ghobject_t &hoid, const set<string> &keys, set<string> *out, map<string, bufferlist> *pairs) {
+      int idx = hoid.hobj.get_hash() % pgmeta_shards;
+      {
+        Mutex::Locker l(shards[idx]->pgmeta_shard_lock);
+        map<string, bufferlist> &obj_caches = shards[idx]->pgmeta_keys[hoid];
+        map<string, bufferlist>::iterator obj_it;
+        for (set<string>::const_iterator it = keys.begin(); it != keys.end(); ++it) {
+          obj_it = obj_caches.find(*it);
+          if (obj_it != obj_caches.end()) {
+            if (pairs)
+              (*pairs)[obj_it->first] = obj_it->second;
+            if (out)
+              out->insert(obj_it->first);
+          }
+        }
+      }
+    }
+    void erase_keys(const ghobject_t &hoid, const set<string> &keys) {
+      int idx = hoid.hobj.get_hash() % pgmeta_shards;
+      {
+        Mutex::Locker l(shards[idx]->pgmeta_shard_lock);
+        map<string, bufferlist> &obj_caches = shards[idx]->pgmeta_keys[hoid];
+        for (set<string>::const_iterator it = keys.begin();
+             it != keys.end(); ++it)
+          obj_caches.erase(*it);
+      }
+    }
+
+    bool set_keys(const ghobject_t &hoid, const map<string, bufferlist> &aset) {
+      int idx = hoid.hobj.get_hash() % pgmeta_shards;
+      PGMetaShard *shard = shards[idx];
+      {
+        Mutex::Locker l(shard->pgmeta_shard_lock);
+        map<string, bufferlist> &obj_caches = shard->pgmeta_keys[hoid];
+        for (map<string, bufferlist>::const_iterator it = aset.begin();
+            it != aset.end(); ++it) {
+          obj_caches[it->first] = it->second;
+          shard->bytes += it->second.length();
+        }
+      }
+      if (shard->bytes > shard_bytes_limit) {
+        submit_shard(idx);
+        return true;
+      }
+      return false;
+    }
+
+    PGMetaCache(FileStore *s, int num, uint64_t limit):
+      store(s), pgmeta_shards(num), shard_bytes_limit(limit) {
+      char lock_name[32] = {0};
+      for (int i = 0; i < num; ++i) {
+        snprintf(lock_name, sizeof(lock_name), "%s.%d", "FileStore:PGMetaCache:", i);
+        PGMetaShard *shard = new PGMetaShard(lock_name);
+        shards.push_back(shard);
+      }
+    }
+  } pgmeta_cache;
+
   Finisher ondisk_finisher;
 
   // helper fns
@@ -193,6 +310,7 @@ private:
   public:
     Sequencer *parent;
     Mutex apply_lock;  // for apply mutual exclusion
+    int id;
     
     /// get_max_uncompleted
     bool _get_max_uncompleted(
@@ -307,10 +425,10 @@ private:
       }
     }
 
-    OpSequencer()
+    OpSequencer(int i)
       : qlock("FileStore::OpSequencer::qlock", false, false),
 	parent(0),
-	apply_lock("FileStore::OpSequencer::apply_lock", false, false) {}
+	apply_lock("FileStore::OpSequencer::apply_lock", false, false), id(i) {}
     ~OpSequencer() {
       assert(q.empty());
     }
@@ -326,11 +444,13 @@ private:
   WBThrottle wbthrottle;
 
   Sequencer default_osr;
+  int next_osr_id;
   deque<OpSequencer*> op_queue;
   uint64_t op_queue_len, op_queue_bytes;
   Cond op_throttle_cond;
   Mutex op_throttle_lock;
-  Finisher op_finisher;
+  const int op_finisher_num;
+  vector<Finisher*> op_finishers;
 
   ThreadPool op_tp;
   struct OpWQ : public ThreadPool::WorkQueue<OpSequencer> {
