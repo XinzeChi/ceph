@@ -37,6 +37,7 @@ class Finisher {
   vector<Context*> finisher_queue;
   list<pair<Context*,int> > finisher_queue_rval;
   PerfCounters *logger;
+  string name;
   
   void *finisher_thread_entry();
 
@@ -105,10 +106,10 @@ class Finisher {
     finisher_stop(false), finisher_running(false),
     logger(0),
     finisher_thread(this) {}
-  Finisher(CephContext *cct_, string name) :
+  Finisher(CephContext *cct_, string n) :
     cct(cct_), finisher_lock("Finisher::finisher_lock"),
     finisher_stop(false), finisher_running(false),
-    logger(0),
+    logger(0), name(n),
     finisher_thread(this) {
     PerfCountersBuilder b(cct, string("finisher-") + name,
 			  l_finisher_first, l_finisher_last);
