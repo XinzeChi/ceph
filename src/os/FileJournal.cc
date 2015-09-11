@@ -793,45 +793,57 @@ int FileJournal::prepare_multi_write(bufferlist& bl, uint64_t& orig_ops, uint64_
     return -ENOSPC;
   
   while (!writeq_empty()) {
-    int r = prepare_single_write(bl, queue_pos, orig_ops, orig_bytes);
-    if (r == -ENOSPC) {
-      if (orig_ops)
-	break;         // commit what we have
-
-      if (logger)
-	logger->inc(l_os_j_full);
-
-      if (wait_on_full) {
-	dout(20) << "prepare_multi_write full on first entry, need to wait" << dendl;
-      } else {
-	dout(20) << "prepare_multi_write full on first entry, restarting journal" << dendl;
-
-	// throw out what we have so far
-	full_state = FULL_FULL;
-	while (!writeq_empty()) {
-	  put_throttle(1, peek_write().bl.length());
-	  pop_write();
-	}  
-	print_header();
+    list<write_item> items;
+    batch_peek_write(items);
+    for (list<write_item>::iterator it = items.begin(); it != items.end();) {
+      int r = prepare_single_write(*it, bl, queue_pos, orig_ops, orig_bytes);
+      if (r == 0) { // prepare ok, delete it
+         items.erase(it++);
       }
+      if (r == -ENOSPC) {
+        // the journal maybe full, insert the left item to writeq
+        backfill_write(items);
+        if (orig_ops)
+          goto out;         // commit what we have
 
-      return -ENOSPC;  // hrm, full on first op
-    }
+        if (logger)
+          logger->inc(l_os_j_full);
 
-    if (eleft) {
-      if (--eleft == 0) {
-	dout(20) << "prepare_multi_write hit max events per write " << g_conf->journal_max_write_entries << dendl;
-	break;
+        if (wait_on_full) {
+          dout(20) << "prepare_multi_write full on first entry, need to wait" << dendl;
+        } else {
+          dout(20) << "prepare_multi_write full on first entry, restarting journal" << dendl;
+
+          // throw out what we have so far
+          full_state = FULL_FULL;
+          while (!writeq_empty()) {
+            put_throttle(1, peek_write().bl.length());
+            pop_write();
+          }
+          print_header();
+        }
+        
+        return -ENOSPC;  // hrm, full on first op
+
       }
-    }
-    if (bmax) {
-      if (bl.length() >= bmax) {
-	dout(20) << "prepare_multi_write hit max write size " << g_conf->journal_max_write_bytes << dendl;
-	break;
+      if (eleft) {
+        if (--eleft == 0) {
+          dout(20) << "prepare_multi_write hit max events per write " << g_conf->journal_max_write_entries << dendl;
+          backfill_write(items);
+          goto out;
+        }
+      }
+      if (bmax) {
+        if (bl.length() >= bmax) {
+          dout(20) << "prepare_multi_write hit max write size " << g_conf->journal_max_write_bytes << dendl;
+          backfill_write(items);
+          goto out;
+        }
       }
     }
   }
 
+out:
   dout(20) << "prepare_multi_write queue_pos now " << queue_pos << dendl;
   assert((write_pos + bl.length() == queue_pos) ||
          (write_pos + bl.length() - header.max_size + get_top() == queue_pos));
@@ -883,10 +895,9 @@ void FileJournal::queue_completions_thru(uint64_t seq)
   finisher_cond.Signal();
 }
 
-int FileJournal::prepare_single_write(bufferlist& bl, off64_t& queue_pos, uint64_t& orig_ops, uint64_t& orig_bytes)
+
+int FileJournal::prepare_single_write(write_item &next_write, bufferlist& bl, off64_t& queue_pos, uint64_t& orig_ops, uint64_t& orig_bytes)
 {
-  // grab next item
-  write_item &next_write = peek_write();
   uint64_t seq = next_write.seq;
   bufferlist &ebl = next_write.bl;
   unsigned head_size = sizeof(entry_header_t);
@@ -943,8 +954,6 @@ int FileJournal::prepare_single_write(bufferlist& bl, off64_t& queue_pos, uint64
   if (next_write.tracked_op)
     next_write.tracked_op->mark_event("write_thread_in_journal_buffer");
 
-  // pop from writeq
-  pop_write();
   journalq.push_back(pair<uint64_t,off64_t>(seq, queue_pos));
   writing_seq = seq;
 
@@ -1547,6 +1556,20 @@ void FileJournal::pop_write()
   assert(write_lock.is_locked());
   Mutex::Locker locker(writeq_lock);
   writeq.pop_front();
+}
+
+void FileJournal::batch_peek_write(list<write_item> &items)
+{
+  assert(write_lock.is_locked());
+  Mutex::Locker locker(writeq_lock);
+  writeq.swap(items);
+}
+
+void FileJournal::backfill_write(list<write_item> &items)
+{
+  assert(write_lock.is_locked());
+  Mutex::Locker locker(writeq_lock);
+  writeq.splice(writeq.begin(), items);
 }
 
 void FileJournal::commit_start(uint64_t seq)
