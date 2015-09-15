@@ -29,13 +29,75 @@
 void Striper::file_to_extents(CephContext *cct, const char *object_format,
 			    const ceph_file_layout *layout,
 			    uint64_t offset, uint64_t len, uint64_t trunc_size,
-			    vector<ObjectExtent>& extents,
+			    vector<ObjectExtent>& exv,
 			    uint64_t buffer_offset)
 {
-  map<object_t,vector<ObjectExtent> > object_extents;
-  file_to_extents(cct, object_format, layout, offset, len, trunc_size,
-		  object_extents, buffer_offset);
-  assimilate_extents(object_extents, extents);
+  ldout(cct, 10) << "file_to_extents " << offset << "~" << len 
+                 << " format " << object_format
+                 << dendl;
+  assert(len > 0);
+  if (layout->fl_stripe_unit != layout->fl_object_size || layout->fl_stripe_count != 1) {
+    map<object_t,vector<ObjectExtent> > object_extents;
+    file_to_extents(cct, object_format, layout, offset, len, trunc_size,
+                    object_extents, buffer_offset);
+    assimilate_extents(object_extents, exv);
+    return ;
+  }
+
+  /*
+   * we want only one extent per object!
+   * this means that each extent we read may map into different bits of the 
+   * final read buffer.. hence OSDExtent.buffer_extents
+   */
+
+  __u32 object_size = layout->fl_object_size;
+  __u32 su = layout->fl_stripe_unit;
+  assert(object_size >= su);
+
+  uint64_t cur = offset;
+  uint64_t left = len;
+  while (left > 0) {
+    uint64_t x_offset, x_len, objectno;
+    objectno = cur / object_size;
+    uint64_t object_start = objectno * object_size;
+    x_offset = cur - object_start;
+    if (x_offset + left >= su)
+      x_len = su - x_offset;
+    else
+      x_len = left;
+
+    // find oid, extent
+    char buf[strlen(object_format) + 32];
+    snprintf(buf, sizeof(buf), object_format, (long long unsigned)objectno);
+    object_t oid = buf;
+
+    ObjectExtent *ex = 0;
+    if (exv.empty() || exv.back().offset + exv.back().length != x_offset) {
+      exv.resize(exv.size() + 1);
+      ex = &exv.back();
+      ex->oid = oid;
+      ex->objectno = objectno;
+      ex->oloc = OSDMap::file_to_object_locator(*layout);
+
+      ex->offset = x_offset;
+      ex->length = x_len;
+      ex->truncate_size = object_truncate_size(cct, layout, objectno, trunc_size);
+
+      ldout(cct, 20) << " added new " << *ex << dendl;
+    } else {
+      // add to extent
+      ex = &exv.back();
+      ldout(cct, 20) << " adding in to " << *ex << dendl;
+      ex->length += x_len;
+    }
+    ex->buffer_extents.push_back(make_pair(cur - offset + buffer_offset, x_len));
+        
+    ldout(cct, 15) << "file_to_extents  " << *ex << " in " << ex->oloc << dendl;
+    //ldout(cct, 0) << "map: ino " << ino << " oid " << ex.oid << " osd " << ex.osd << " offset " << ex.offset << " l
+    
+    left -= x_len;
+    cur += x_len;
+  }
 }
 
 void Striper::file_to_extents(CephContext *cct, const char *object_format,
