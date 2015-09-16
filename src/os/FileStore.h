@@ -261,8 +261,6 @@ private:
     }
   } pgmeta_cache;
 
-  Finisher ondisk_finisher;
-
   // helper fns
   int get_cdir(coll_t cid, char *s, int len);
   

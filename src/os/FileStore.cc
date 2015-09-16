@@ -527,7 +527,6 @@ FileStore::FileStore(const std::string &base, const std::string &jdev, osflagbit
   index_manager(do_update),
   pgmeta_cache(this, g_conf->filestore_pgmeta_cache_shards,
                g_conf->filestore_pgmeta_cache_shard_bytes),
-  ondisk_finisher(g_ceph_context),
   lock("FileStore::lock"),
   force_sync(false), 
   sync_entry_timeo_lock("sync_entry_timeo_lock"),
@@ -1615,7 +1614,6 @@ int FileStore::mount()
   for (vector<Finisher*>::iterator it = op_finishers.begin(); it != op_finishers.end(); ++it) {
     (*it)->start();
   }
-  ondisk_finisher.start();
 
   timer.init();
 
@@ -1667,7 +1665,6 @@ int FileStore::umount()
   for (vector<Finisher*>::iterator it = op_finishers.begin(); it != op_finishers.end(); ++it) {
     (*it)->stop();
   }
-  ondisk_finisher.stop();
 
   if (fsid_fd >= 0) {
     VOID_TEMP_FAILURE_RETRY(::close(fsid_fd));
@@ -2005,10 +2002,12 @@ void FileStore::_journaled_ahead(OpSequencer *osr, Op *o, Context *ondisk)
   // getting blocked behind an ondisk completion.
   if (ondisk) {
     dout(10) << " queueing ondisk " << ondisk << dendl;
-    ondisk_finisher.queue(ondisk);
+    // In order to avoid the same finisher thread processing the same osr ondisk
+    // and onapplied context. So we can improve single osr bandwidth
+    op_finishers[(osr->id + 1) % op_finisher_num]->queue(ondisk);
   }
   if (!to_queue.empty()) {
-    ondisk_finisher.queue(to_queue);
+    op_finishers[(osr->id + 1) % op_finisher_num]->queue(to_queue);
   }
 }
 
@@ -3740,7 +3739,9 @@ void FileStore::flush()
     if (journal)
       journal->flush();
     dout(10) << "flush draining ondisk finisher" << dendl;
-    ondisk_finisher.wait_for_empty();
+    for (vector<Finisher*>::iterator it = op_finishers.begin(); it != op_finishers.end(); ++it) {
+      (*it)->wait_for_empty();
+    }
   }
 
   _flush_op_queue();
