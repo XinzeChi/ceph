@@ -43,6 +43,7 @@
 #include <vector>
 #include <string>
 #include <exception>
+#include <iostream>
 
 #include "page.h"
 #include "crc32c.h"
@@ -115,6 +116,14 @@ public:
   /// enable/disable tracking of buffer::ptr::c_str() calls
   static void track_c_str(bool b);
 
+  enum raw_type {
+    NONE,
+    NORMAL,
+    ALIGN,
+  };
+
+  class raw;
+  class buffer_raw_pool;
 private:
  
   /* hack for memory utilization debugging. */
@@ -124,7 +133,6 @@ private:
   /*
    * an abstract raw buffer.  with a reference count.
    */
-  class raw;
   class raw_malloc;
   class raw_static;
   class raw_mmap_pages;
