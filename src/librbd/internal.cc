@@ -3396,7 +3396,9 @@ reprotect_and_return_err:
 	c->add_request();
 
 	req->set_op_flags(op_flags);
-	req->send();
+        if (!ictx->io_limits_intercept(req, true)) {
+          req->send();
+        }
       }
     }
 
@@ -3714,8 +3716,8 @@ reprotect_and_return_err:
 	  ictx->aio_read_from_cache(q->oid, q->objectno, &req->data(),
 				    q->length, q->offset,
 				    cache_comp, op_flags);
-	} else {
-	  req->send();
+	} else if (!ictx->io_limits_intercept(req, false)) {
+          req->send();
 	}
       }
     }

@@ -10,6 +10,7 @@
 #include "common/perf_counters.h"
 #include "common/WorkQueue.h"
 
+#include "librbd/AioRequest.h"
 #include "librbd/AsyncOperation.h"
 #include "librbd/AsyncRequest.h"
 #include "librbd/AsyncResizeRequest.h"
@@ -74,6 +75,7 @@ public:
       object_map_lock("librbd::ImageCtx::object_map_lock"),
       async_ops_lock("librbd::ImageCtx::async_ops_lock"),
       copyup_list_lock("librbd::ImageCtx::copyup_list_lock"),
+      throttle_lock("librbd::ImageCtx::throttle_lock"),
       extra_read_flags(0),
       old_format(true),
       order(0), size(0), features(0),
@@ -83,6 +85,7 @@ public:
       object_cacher(NULL), writeback_handler(NULL), object_set(NULL),
       readahead(),
       total_bytes_read(0), copyup_finisher(NULL),
+      throttle((CephContext*)p.cct(), 0),
       object_map(*this), aio_work_queue(NULL)
   {
     md_ctx.dup(p);
@@ -101,40 +104,6 @@ public:
       pname += snap_name;
     }
     perf_start(pname);
-
-    if (cct->_conf->rbd_cache) {
-      Mutex::Locker l(cache_lock);
-      ldout(cct, 20) << "enabling caching..." << dendl;
-      writeback_handler = new LibrbdWriteback(this, cache_lock);
-
-      uint64_t init_max_dirty = cct->_conf->rbd_cache_max_dirty;
-      if (cct->_conf->rbd_cache_writethrough_until_flush)
-	init_max_dirty = 0;
-      ldout(cct, 20) << "Initial cache settings:"
-		     << " size=" << cct->_conf->rbd_cache_size
-		     << " num_objects=" << 10
-		     << " max_dirty=" << init_max_dirty
-		     << " target_dirty=" << cct->_conf->rbd_cache_target_dirty
-		     << " max_dirty_age="
-		     << cct->_conf->rbd_cache_max_dirty_age << dendl;
-
-      object_cacher = new ObjectCacher(cct, pname, *writeback_handler, cache_lock,
-				       NULL, NULL,
-				       cct->_conf->rbd_cache_size,
-				       10,  /* reset this in init */
-				       init_max_dirty,
-				       cct->_conf->rbd_cache_target_dirty,
-				       cct->_conf->rbd_cache_max_dirty_age,
-				       cct->_conf->rbd_cache_block_writes_upfront);
-      object_set = new ObjectCacher::ObjectSet(NULL, data_ctx.get_id(), 0);
-      object_set->return_enoent = true;
-      object_cacher->start();
-    }
-
-    if (cct->_conf->rbd_clone_copy_on_read) {
-      copyup_finisher = new Finisher(cct);
-      copyup_finisher->start();
-    }
 
     ThreadPoolSingleton *thread_pool_singleton;
     cct->lookup_or_create_singleton_object<ThreadPoolSingleton>(
@@ -167,6 +136,18 @@ public:
     delete aio_work_queue;
   }
 
+  class ThrottleContext : public Context {
+    ImageCtx *ictx;
+    bool is_write;
+
+   public:
+    ThrottleContext(ImageCtx *c, bool w): ictx(c), is_write(w) {}
+    virtual void finish(int r) {}
+    virtual void complete(int r) {
+      ictx->process_throttle_req(is_write);
+    }
+  };
+
   int ImageCtx::init() {
     int r;
     string pname = string("librbd-") + id + string("-") +
@@ -197,6 +178,7 @@ public:
       }
 
       header_oid = header_name(id);
+      apply_metadata_confs();
       r = cls_client::get_immutable_metadata(&md_ctx, header_oid,
 					     &object_prefix, &order);
       if (r < 0) {
@@ -218,6 +200,7 @@ public:
       apply_metadata_confs();
       header_oid = old_header_name(name);
     }
+    perfcounter->set(l_librbd_throttle_enabled, throttle.enabled());
 
     if (cache) {
       Mutex::Locker l(cache_lock);
@@ -339,6 +322,7 @@ public:
     plb.add_u64_counter(l_librbd_resize, "resize");
     plb.add_u64_counter(l_librbd_readahead, "readahead");
     plb.add_u64_counter(l_librbd_readahead_bytes, "readahead_bytes");
+    plb.add_u64(l_librbd_throttle_enabled, "throttle_enabled");
 
     perfcounter = plb.create_perf_counters();
     cct->get_perfcounters_collection()->add(perfcounter);
@@ -887,6 +871,9 @@ public:
 
     string start = prefix;
     for (map<string, bufferlist>::iterator it = pairs.begin(); it != pairs.end(); ++it) {
+      if (it->first.compare(0, conf_prefix_len, prefix) > 0)
+        continue;
+
       if (it->first.size() <= conf_prefix_len || it->first.compare(0, conf_prefix_len, prefix))
         return false;
 
@@ -955,6 +942,7 @@ public:
                      << it->second.c_str() << ": " << j << dendl;
         break;
       }
+      aware_metadata(METADATA_CONF_PREFIX, pairs);
       start = pairs.rbegin()->first;
     } while (is_continue);
 
@@ -986,6 +974,91 @@ public:
     ASSIGN_OPTION(blacklist_on_break_lock);
     ASSIGN_OPTION(blacklist_expire_seconds);
     ASSIGN_OPTION(request_timed_out_seconds);
+    if (throttle.enabled()) {
+      throttle.attach_context(new ThrottleContext(this, false), new ThrottleContext(this, true));
+    }
   }
 
+  void ImageCtx::aware_metadata(string prefix, map<string, bufferlist> &metadata)
+  {
+    ldout(cct, 20) << __func__ << dendl;
+    map<string, enum BucketType> throttle_configs = boost::assign::map_list_of(
+        "rbd_throttle_bps_total", THROTTLE_BPS_TOTAL)(
+        "rbd_throttle_bps_total_max",  THROTTLE_BPS_TOTAL)(
+        "rbd_throttle_bps_read", THROTTLE_BPS_READ)(
+        "rbd_throttle_bps_read_max", THROTTLE_BPS_READ)(
+        "rbd_throttle_bps_write", THROTTLE_BPS_WRITE)(
+        "rbd_throttle_bps_write_max", THROTTLE_BPS_WRITE)(
+        "rbd_throttle_iops_total", THROTTLE_OPS_TOTAL)(
+        "rbd_throttle_iops_total_max", THROTTLE_OPS_TOTAL)(
+        "rbd_throttle_iops_read", THROTTLE_OPS_READ)(
+        "rbd_throttle_iops_read_max", THROTTLE_OPS_READ)(
+        "rbd_throttle_iops_write", THROTTLE_OPS_WRITE)(
+        "rbd_throttle_iops_write_max", THROTTLE_OPS_WRITE);
+
+    for (map<string, enum BucketType>::const_iterator it = throttle_configs.begin();
+         it != throttle_configs.end(); ++it) {
+      string key = prefix + it->first;
+      if (metadata.count(key)) {
+        string err;
+        string b = string(metadata[key].c_str(), metadata[key].length());
+        long long num = strict_strtoll(b.c_str(), 10, &err);
+        if (!err.empty()) {
+          ldout(cct, 0) << __func__ << " failed to parse key=" << key
+                        << " value=" << b << dendl;
+          continue;
+        }
+        double avg = 0, max = 0;
+        int len = key.size();
+        if (key.compare(len-4, 4, "_max"))
+          avg = num;
+        else
+          max = num;
+        ldout(cct, 20) << __func__ << " throttle config=" << key
+                       << " avg=" << avg << " max=" << max << dendl;
+        throttle.config(it->second, avg, max);
+      }
+    }
+  }
+
+  bool ImageCtx::io_limits_intercept(AioRequest *req, bool is_write)
+  {
+    if (!throttle.enabled())
+      return false;
+
+    /* does this io must wait */
+    bool must_wait = throttle.schedule_timer(is_write);
+
+    Mutex::Locker l(throttle_lock);
+    /* if must wait or any request of this type throttled queue the IO */
+    if (must_wait || !throttle_reqs[is_write].empty()) {
+      ldout(cct, 20) << __func__ << " req=" << req << " is_write=" << is_write
+                     << " throttle_req's size=" << throttle_reqs[is_write].size()
+                     << " hit limit, wait to send" << dendl;
+      throttle_reqs[is_write].push_back(req);
+      return true;
+    }
+
+    /* the IO will be executed, do the accounting */
+    throttle.account(is_write, req->get_object_len());
+
+    return false;
+  }
+
+  void ImageCtx::process_throttle_req(bool is_write)
+  {
+    ldout(cct, 20) << __func__ << " is_write=" << is_write << dendl;
+    Mutex::Locker l(throttle_lock);
+    while (!throttle_reqs[is_write].empty()) {
+      if (throttle.schedule_timer(is_write, true))
+        break;
+
+      /* the IO will be executed, do the accounting */
+      AioRequest *req = throttle_reqs[is_write].front();
+      throttle_reqs[is_write].pop_front();
+      throttle.account(is_write, req->get_object_len());
+
+      req->send();
+    }
+  }
 }

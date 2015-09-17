@@ -408,3 +408,23 @@ TEST_F(TestInternal, MetadatConfig) {
   ASSERT_EQ(0, r);
   ASSERT_STREQ(val.c_str(), "value3");
 }
+
+
+TEST_F(TestInternal, ThrottleConfigAware) {
+  librbd::ImageCtx *ictx;
+  ASSERT_EQ(0, open_image(m_image_name, &ictx));
+  ASSERT_EQ(0, librbd::metadata_set(ictx, "conf_rbd_throttle_bps_total", "1024000"));
+  ASSERT_EQ(0, librbd::metadata_set(ictx, "conf_rbd_throttle_iops_total", "50"));
+  ASSERT_EQ(0, librbd::metadata_set(ictx, "conf_rbd_throttle_bps_total_max", "10240000"));
+  ASSERT_EQ(0, librbd::metadata_set(ictx, "conf_rbd_throttle_iops_total_max", "500"));
+  close_image(ictx);
+
+  ASSERT_EQ(0, open_image(m_image_name, &ictx));
+  LeakyBucket buckets[BUCKETS_COUNT];
+  ictx->throttle.get_config(buckets);
+  ASSERT_TRUE(ictx->throttle.enabled());
+  ASSERT_EQ(buckets[THROTTLE_BPS_TOTAL].avg, 1024000);
+  ASSERT_EQ(buckets[THROTTLE_OPS_TOTAL].avg, 50);
+  ASSERT_EQ(buckets[THROTTLE_BPS_TOTAL].max, 10240000);
+  ASSERT_EQ(buckets[THROTTLE_OPS_TOTAL].max, 500);
+}

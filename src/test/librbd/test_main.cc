@@ -13,6 +13,7 @@ extern void register_test_librbd();
 extern void register_test_image_watcher();
 extern void register_test_internal();
 extern void register_test_object_map();
+extern void register_test_throttle();
 #endif // TEST_LIBRBD_INTERNALS
 
 int main(int argc, char **argv)
@@ -22,6 +23,7 @@ int main(int argc, char **argv)
   register_test_image_watcher();
   register_test_internal();
   register_test_object_map();
+  register_test_throttle();
 #endif // TEST_LIBRBD_INTERNALS
 
   ::testing::InitGoogleTest(&argc, argv);

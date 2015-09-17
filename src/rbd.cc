@@ -2547,7 +2547,7 @@ enum {
 
 static int get_cmd(const char *cmd, bool snapcmd, bool lockcmd, bool metacmd)
 {
-  if (!snapcmd && !lockcmd) {
+  if (!snapcmd && !lockcmd && !metacmd) {
     if (strcmp(cmd, "ls") == 0 ||
         strcmp(cmd, "list") == 0)
       return OPT_LIST;

@@ -50,6 +50,8 @@ enum {
   l_librbd_readahead,
   l_librbd_readahead_bytes,
 
+  l_librbd_throttle_enabled,
+
   l_librbd_last,
 };
 

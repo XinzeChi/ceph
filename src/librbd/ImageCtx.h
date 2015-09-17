@@ -29,6 +29,7 @@
 #include "librbd/ObjectMap.h"
 #include "librbd/SnapInfo.h"
 #include "librbd/parent_types.h"
+#include "librbd/Throttle.h"
 
 class CephContext;
 class ContextWQ;
@@ -42,6 +43,7 @@ namespace librbd {
   class AsyncResizeRequest;
   class CopyupRequest;
   class ImageWatcher;
+  class AioRequest;
 
   struct ImageCtx {
     CephContext *cct;
@@ -93,6 +95,7 @@ namespace librbd {
     RWLock object_map_lock; // protects object map updates and object_map itself
     Mutex async_ops_lock; // protects async_ops and async_requests
     Mutex copyup_list_lock; // protects copyup_waiting_list
+    Mutex throttle_lock; // protects throttle_reqs
 
     unsigned extra_read_flags;
 
@@ -124,6 +127,9 @@ namespace librbd {
     xlist<AsyncOperation*> async_ops;
     xlist<AsyncRequest*> async_requests;
     Cond async_requests_cond;
+
+    BlockThrottle throttle;
+    std::list<AioRequest*> throttle_reqs[2];
 
     ObjectMap object_map;
 
@@ -236,6 +242,9 @@ namespace librbd {
 
     void cancel_async_requests();
     void apply_metadata_confs();
+    void aware_metadata(string prefix, map<string, bufferlist> &metadata);
+    bool io_limits_intercept(AioRequest *req, bool is_write);
+    void process_throttle_req(bool is_write);
   };
 }
 

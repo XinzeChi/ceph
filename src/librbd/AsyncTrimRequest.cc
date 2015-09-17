@@ -139,7 +139,6 @@ void AsyncTrimRequest::send() {
 }
 
 void AsyncTrimRequest::send_remove_objects() {
-  CephContext *cct = m_image_ctx.cct;
   ldout(m_image_ctx.cct, 5) << this << " send_remove_objects: "
 			    << " delete_start=" << m_delete_start
 			    << " num_objects=" << m_num_objects << dendl;
