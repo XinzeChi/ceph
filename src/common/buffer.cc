@@ -21,13 +21,16 @@
 #include "common/strtol.h"
 #include "common/likely.h"
 #include "include/atomic.h"
+#include "common/RWLock.h"
 #include "common/Mutex.h"
+#include "common/Cond.h"
 #include "include/types.h"
 #include "include/compat.h"
 #if defined(HAVE_XIO)
 #include "msg/xio/XioMsg.h"
 #endif
 
+#include <list>
 #include <errno.h>
 #include <fstream>
 #include <sstream>
@@ -190,7 +193,147 @@ static simple_spinlock_t buffer_debug_lock = SIMPLE_SPINLOCK_INITIALIZER;
       Mutex::Locker l(crc_lock);
       crc_map.clear();
     }
+    virtual raw_type get_type() { return NONE; }
   };
+
+  class buffer_raw_pool
+  {
+    public:
+      buffer_raw_pool(uint32_t m, uint32_t as, uint32_t pn = 0, uint32_t ps = 0, uint32_t ms = 0)
+        : align_pool_size(m), align_size(as), pools_num(pn),
+          pool_size(ps), max_size(ms),
+          lock("buffer raw pool lock") {}
+  
+      ~buffer_raw_pool() {
+        for (vector<buffer::raw*>::iterator p = align_pool.begin();
+             p != align_pool.end();
+             ++p) {
+          delete *p;
+          *p = NULL;
+        }
+        for (map<uint32_t, vector<buffer::raw*> >::iterator pool = pools.begin();
+            pool != pools.end();
+            ++pool) {
+          for (vector<buffer::raw*>::iterator p = pool->second.begin();
+               p != pool->second.end();
+               ++p) {
+            delete *p;
+            *p = NULL;
+          }
+        }
+      }
+ 
+      void trim_cache(list<uint32_t> &lru) {
+        while (lru.size() > pools_num) {
+          lru_remove(lru.back());
+        }
+        assert(pools.size() <= pools_num);
+      }
+
+      void lru_remove(uint32_t key) {
+        map<uint32_t, vector<buffer::raw*> >::iterator i = pools.find(key);
+        // TODO maybe free in another thread
+        if (i != pools.end()) {
+          for (vector<buffer::raw*>::iterator it = i->second.begin();
+               it != i->second.end();
+               ++it) {
+            delete *it;
+            *it = NULL;
+          }
+          pools.erase(i);
+        }
+        map<uint32_t, list<uint32_t>::iterator>::iterator j = contents.find(key);
+        if (j == contents.end())
+          return;
+        lru.erase(j->second);
+        contents.erase(j);
+      }
+
+      void lru_add(uint32_t key) {
+        map<uint32_t, list<uint32_t>::iterator>::iterator i = contents.find(key);
+        if (i != contents.end()) {
+          lru.splice(lru.begin(), lru, i->second);
+        } else {
+          lru.push_front(key);
+          contents[key] = lru.begin();
+          trim_cache(lru);
+        }
+      }
+ 
+      buffer::raw* get_from_pool(unsigned len, buffer::raw_type type) {
+        Mutex::Locker l(lock);
+        if (len > max_size) {
+          return NULL;
+        }
+        if (type == buffer::ALIGN) {
+          if (align_pool.empty()) {
+            return NULL;
+          }
+          buffer::raw* &ret = align_pool.back();
+          if (ret->len != len) // len mismatch
+            return NULL;
+          align_pool.pop_back();
+          return ret;
+        } else if (type == buffer::NORMAL){
+          lru_add(len);
+          map<uint32_t, list<uint32_t>::iterator>::iterator i = contents.find(len);
+          assert(i != contents.end());
+          vector<buffer::raw*> &v = pools[len];
+          if (v.empty()) {
+            return NULL;
+          }
+          buffer::raw* &ret = v.back();
+          if (ret->len != len) { // len mismatch
+            return NULL;
+          }
+          v.pop_back();
+          return ret;
+        }
+        return NULL;
+      }
+ 
+      int release_to_pool(buffer::raw* object, buffer::raw_type type) {
+        Mutex::Locker l(lock);
+        if (object->len > max_size) {
+          return -ENOSPC;
+        }
+        if (type == buffer::ALIGN) {
+          if (object->len != align_size || // size mismatch
+              align_pool.size() >= align_pool_size) { // pool is full
+            return -ENOSPC;
+          }
+          align_pool.push_back(object);
+          return 0;
+        } else if (type == buffer::NORMAL){
+          map<uint32_t, list<uint32_t>::iterator>::iterator i = contents.find(object->len); // is not in lru
+          if (i == contents.end()) {
+            return -ENOSPC;
+          }
+          vector<buffer::raw*> &v = pools[object->len];
+          if (v.size() >= pool_size) { // pool is full
+            return -ENOSPC;
+          }
+          v.push_back(object);
+          return 0;
+        }
+        return -ENOSPC;
+      }
+  
+    private:
+ 
+      vector<buffer::raw*> align_pool;
+      uint32_t align_pool_size;
+      uint32_t align_size;
+      uint32_t pools_num;
+      uint32_t pool_size;
+      uint32_t max_size;
+      Mutex lock;
+      map<uint32_t, vector<buffer::raw*> > pools;
+      map<uint32_t, list<uint32_t>::iterator> contents;
+      list<uint32_t> lru;
+  };
+
+  static buffer_raw_pool *pool = new buffer_raw_pool(1024, 4096, 20, 256, 16384);
 
   class buffer::raw_malloc : public buffer::raw {
   public:
@@ -215,8 +358,12 @@ static simple_spinlock_t buffer_debug_lock = SIMPLE_SPINLOCK_INITIALIZER;
       bdout << "raw_malloc " << this << " free " << (void *)data << " " << buffer::get_total_alloc() << bendl;
     }
     raw* clone_empty() {
+      buffer::raw* buf = pool->get_from_pool(len, NORMAL);
+      if (buf)
+        return buf; 
       return new raw_malloc(len);
     }
+    raw_type get_type() { return NORMAL; }
   };
 
 #ifndef __CYGWIN__
@@ -264,8 +411,12 @@ static simple_spinlock_t buffer_debug_lock = SIMPLE_SPINLOCK_INITIALIZER;
       bdout << "raw_posix_aligned " << this << " free " << (void *)data << " " << buffer::get_total_alloc() << bendl;
     }
     raw* clone_empty() {
+      buffer::raw* buf = pool->get_from_pool(len, ALIGN);
+      if (buf)
+        return buf;
       return new raw_posix_aligned(len, align);
     }
+    raw_type get_type() { return ALIGN; }
   };
 #endif
 
@@ -293,8 +444,12 @@ static simple_spinlock_t buffer_debug_lock = SIMPLE_SPINLOCK_INITIALIZER;
       dec_total_alloc(len+align-1);
     }
     raw* clone_empty() {
+      buffer::raw* buf = pool->get_from_pool(len, ALIGN);
+      if (buf)
+        return buf;
       return new raw_hack_aligned(len, align);
     }
+    raw_type get_type() { return ALIGN; }
   };
 #endif
 
@@ -498,8 +653,12 @@ static simple_spinlock_t buffer_debug_lock = SIMPLE_SPINLOCK_INITIALIZER;
       bdout << "raw_char " << this << " free " << (void *)data << " " << buffer::get_total_alloc() << bendl;
     }
     raw* clone_empty() {
+      buffer::raw* buf = pool->get_from_pool(len, NORMAL);
+      if (buf)
+        return buf;
       return new raw_char(len);
     }
+    raw_type get_type() { return NORMAL; }
   };
 
   class buffer::raw_unshareable : public buffer::raw {
@@ -513,6 +672,9 @@ static simple_spinlock_t buffer_debug_lock = SIMPLE_SPINLOCK_INITIALIZER;
     raw_unshareable(unsigned l, char *b) : raw(b, l) {
     }
     raw* clone_empty() {
+      buffer::raw* buf = pool->get_from_pool(len, NORMAL);
+      if (buf)
+        return buf;
       return new raw_char(len);
     }
     bool is_shareable() {
@@ -521,6 +683,7 @@ static simple_spinlock_t buffer_debug_lock = SIMPLE_SPINLOCK_INITIALIZER;
     ~raw_unshareable() {
       delete[] data;
     }
+    raw_type get_type() { return NORMAL; }
   };
 
   class buffer::raw_static : public buffer::raw {
@@ -528,6 +691,9 @@ static simple_spinlock_t buffer_debug_lock = SIMPLE_SPINLOCK_INITIALIZER;
     raw_static(const char *d, unsigned l) : raw((char*)d, l) { }
     ~raw_static() {}
     raw* clone_empty() {
+      buffer::raw* buf = pool->get_from_pool(len, NORMAL);
+      if (buf)
+        return buf;
       return new buffer::raw_char(len);
     }
   };
@@ -550,6 +716,9 @@ static simple_spinlock_t buffer_debug_lock = SIMPLE_SPINLOCK_INITIALIZER;
       buf->m_hook->put();
     }
     raw* clone_empty() {
+      buffer::raw* buf = pool->get_from_pool(len, NORMAL);
+      if (buf)
+        return buf;
       return new buffer::raw_char(len);
     }
   };
@@ -562,6 +731,9 @@ static simple_spinlock_t buffer_debug_lock = SIMPLE_SPINLOCK_INITIALIZER;
     { }
     ~xio_mempool() {}
     raw* clone_empty() {
+      buffer::raw* buf = pool->get_from_pool(len, NORMAL);
+      if (buf)
+        return buf;
       return new buffer::raw_char(len);
     }
   };
@@ -586,17 +758,25 @@ static simple_spinlock_t buffer_debug_lock = SIMPLE_SPINLOCK_INITIALIZER;
 #endif /* HAVE_XIO */
 
   buffer::raw* buffer::copy(const char *c, unsigned len) {
-    raw* r = new raw_char(len);
+    buffer::raw* r = pool->get_from_pool(len, NORMAL);
+    if (!r)
+      r = new raw_char(len);
     memcpy(r->data, c, len);
     return r;
   }
   buffer::raw* buffer::create(unsigned len) {
+    buffer::raw* buf = pool->get_from_pool(len, NORMAL);
+    if (buf)
+      return buf;
     return new raw_char(len);
   }
   buffer::raw* buffer::claim_char(unsigned len, char *buf) {
     return new raw_char(len, buf);
   }
   buffer::raw* buffer::create_malloc(unsigned len) {
+    buffer::raw* buf = pool->get_from_pool(len, NORMAL);
+    if (buf)
+      return buf;
     return new raw_malloc(len);
   }
   buffer::raw* buffer::claim_malloc(unsigned len, char *buf) {
@@ -606,6 +786,9 @@ static simple_spinlock_t buffer_debug_lock = SIMPLE_SPINLOCK_INITIALIZER;
     return new raw_static(buf, len);
   }
   buffer::raw* buffer::create_aligned(unsigned len, unsigned align) {
+    buffer::raw* buf = pool->get_from_pool(len, ALIGN);
+    if (buf)
+      return buf;
 #ifndef __CYGWIN__
     //return new raw_mmap_pages(len);
     return new raw_posix_aligned(len, align);
@@ -720,8 +903,10 @@ static simple_spinlock_t buffer_debug_lock = SIMPLE_SPINLOCK_INITIALIZER;
     if (_raw) {
       bdout << "ptr " << this << " release " << _raw << bendl;
       if (_raw->nref.dec() == 0) {
-	//cout << "hosing raw " << (void*)_raw << " len " << _raw->len << std::endl;
-	delete _raw;  // dealloc old (if any)
+        _raw->crc_map.clear();
+        if (ceph::pool->release_to_pool(_raw, _raw->get_type())) {
+          delete _raw; // dealloc old (if any)
+        }
       }
       _raw = 0;
     }
