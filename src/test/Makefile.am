@@ -70,6 +70,7 @@ check_SCRIPTS += \
 	test/cephtool-test-mds.sh \
 	test/cephtool-test-rados.sh \
 	unittest_bufferlist.sh \
+	unittest_bufferpool.sh \
 	test/encoding/check-generated.sh \
 	test/mon/osd-pool-create.sh \
 	test/mon/misc.sh \
@@ -274,6 +275,11 @@ unittest_bufferlist_SOURCES = test/bufferlist.cc
 unittest_bufferlist_LDADD = $(UNITTEST_LDADD) $(CEPH_GLOBAL)
 unittest_bufferlist_CXXFLAGS = $(UNITTEST_CXXFLAGS)
 check_TESTPROGRAMS += unittest_bufferlist
+
+unittest_bufferpool_SOURCES = test/bufferpool.cc
+unittest_bufferpool_LDADD = $(UNITTEST_LDADD) $(CEPH_GLOBAL)
+unittest_bufferpool_CXXFLAGS = $(UNITTEST_CXXFLAGS)
+check_TESTPROGRAMS += unittest_bufferpool
 
 unittest_xlist_SOURCES = test/test_xlist.cc
 unittest_xlist_LDADD = $(UNITTEST_LDADD) $(LIBCOMMON)
