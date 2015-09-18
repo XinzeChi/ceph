@@ -27,7 +27,7 @@
 TEST(BufferPool, test)
 {
   const int32_t raw_size = 4096;
-  ceph::buffer_raw_pool *pool = ceph::pool;
+  ceph::buffer_raw_pools *pool = ceph::pool;
   {
     buffer::raw *ret = pool->get_from_pool(raw_size, buffer::ALIGN); 
     EXPECT_EQ(NULL, ret);
