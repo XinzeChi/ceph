@@ -132,14 +132,17 @@ static simple_spinlock_t buffer_debug_lock = SIMPLE_SPINLOCK_INITIALIZER;
 
     mutable Mutex crc_lock;
     map<pair<size_t, size_t>, pair<uint32_t, uint32_t> > crc_map;
+    uint64_t poolid;
 
     raw(unsigned l)
       : data(NULL), len(l), nref(0),
-	crc_lock("buffer::raw::crc_lock", false, false)
+	crc_lock("buffer::raw::crc_lock", false, false),
+        poolid(ULONG_MAX)
     { }
     raw(char *c, unsigned l)
       : data(c), len(l), nref(0),
-	crc_lock("buffer::raw::crc_lock", false, false)
+	crc_lock("buffer::raw::crc_lock", false, false),
+        poolid(ULONG_MAX)
     { }
     virtual ~raw() {}
 
@@ -333,7 +336,51 @@ static simple_spinlock_t buffer_debug_lock = SIMPLE_SPINLOCK_INITIALIZER;
       list<uint32_t> lru;
   };
 
-  static buffer_raw_pool *pool = new buffer_raw_pool(1024, 4096, 20, 256, 16384);
+  class buffer_raw_pools {
+    public:
+      atomic_t rotate_count;
+      vector<buffer_raw_pool*> pools;
+      uint64_t max;
+    
+    buffer_raw_pools(uint64_t count) {
+      max = count;
+      for (uint64_t p = 0; p < max; p++) {
+        pools.push_back(new buffer_raw_pool(32, 4096, 20, 16, 16384));
+      }
+    }
+
+    ~buffer_raw_pools() {
+      for (uint64_t p = 0; p < max; p++) {
+        delete pools[p];
+        pools[p] = NULL;
+      }
+      pools.clear();
+    }
+   
+    int release_to_pool(buffer::raw* object, buffer::raw_type type) {
+      if (object->poolid == ULONG_MAX) {
+        uint64_t p = rotate_count.inc() % max;
+        if (p == max -1) {
+          rotate_count.set(0);
+        }
+        return pools[p]->release_to_pool(object, type);
+      }
+      return pools[object->poolid]->release_to_pool(object, type);
+    }
+
+    buffer::raw* get_from_pool(unsigned len, buffer::raw_type type) {
+      uint64_t p = rotate_count.inc() % max;
+      if (p == max - 1) {
+        rotate_count.set(0);
+      }
+      buffer::raw* buf = pools[p]->get_from_pool(len, type);
+      if (buf)
+        buf->poolid = p;
+      return buf;
+    }
+  };
+
+  static buffer_raw_pools *pool = new buffer_raw_pools(64);
 
   class buffer::raw_malloc : public buffer::raw {
   public:
