@@ -18,6 +18,7 @@
 #include "common/safe_io.h"
 #include "FileJournal.h"
 #include "include/color.h"
+#include "common/io_priority.h"
 #include "common/perf_counters.h"
 #include "os/FileStore.h"
 
@@ -391,11 +392,6 @@ int FileJournal::create()
 
   print_header();
 
-  // static zeroed buffer for alignment padding
-  delete [] zero_buf;
-  zero_buf = new char[header.alignment];
-  memset(zero_buf, 0, header.alignment);
-
   bp = prepare_header();
   if (TEMP_FAILURE_RETRY(::pwrite(fd, bp.c_str(), bp.length(), 0)) < 0) {
     ret = errno;
@@ -476,11 +472,6 @@ int FileJournal::open(uint64_t fs_op_seq)
   err = read_header();
   if (err < 0)
     return err;
-
-  // static zeroed buffer for alignment padding
-  delete [] zero_buf;
-  zero_buf = new char[header.alignment];
-  memset(zero_buf, 0, header.alignment);
 
   dout(10) << "open header.fsid = " << header.fsid 
     //<< " vs expected fsid = " << fsid 
@@ -900,57 +891,42 @@ int FileJournal::prepare_single_write(write_item &next_write, bufferlist& bl, of
 {
   uint64_t seq = next_write.seq;
   bufferlist &ebl = next_write.bl;
-  unsigned head_size = sizeof(entry_header_t);
-  off64_t base_size = 2*head_size + ebl.length();
-
-  int alignment = next_write.alignment; // we want to start ebl with this alignment
-  unsigned pre_pad = 0;
-  if (alignment >= 0)
-    pre_pad = ((unsigned int)alignment - (unsigned int)head_size) & ~CEPH_PAGE_MASK;
-  off64_t size = ROUND_UP_TO(base_size + pre_pad, header.alignment);
-  unsigned post_pad = size - base_size - pre_pad;
+  assert(ebl.is_page_aligned());
+  assert(ebl.is_n_page_sized());
+  assert(ebl.buffers().size() == 1);
+  off64_t size = ebl.length();
 
   int r = check_for_full(seq, queue_pos, size);
   if (r < 0)
     return r;   // ENOSPC or EAGAIN
 
-  orig_bytes += ebl.length();
+  uint32_t orig_len = next_write.orig_len;
+  orig_bytes += orig_len;
   orig_ops++;
 
   // add to write buffer
   dout(15) << "prepare_single_write " << orig_ops << " will write " << queue_pos << " : seq " << seq
-	   << " len " << ebl.length() << " -> " << size
-	   << " (head " << head_size << " pre_pad " << pre_pad
-	   << " ebl " << ebl.length() << " post_pad " << post_pad << " tail " << head_size << ")"
-	   << " (ebl alignment " << alignment << ")"
-	   << dendl;
+	   << " len " << orig_len << " -> " << size << dendl;
     
-  // add it this entry
-  entry_header_t h;
-  memset(&h, 0, sizeof(h));
-  h.seq = seq;
-  h.pre_pad = pre_pad;
-  h.len = ebl.length();
-  h.post_pad = post_pad;
-  h.make_magic(queue_pos, header.get_fsid64());
-  if (header.flags & header_t::FLAG_CRC)
-    h.crc32c = ebl.crc32c(0);
-  else
-    h.crc32c = 0;
 
-  bl.append((const char*)&h, sizeof(h));
-  if (pre_pad) {
-    bufferptr bp = buffer::create_static(pre_pad, zero_buf);
-    bl.push_back(bp);
-  }
-  bl.claim_append(ebl, buffer::list::CLAIM_ALLOW_NONSHAREABLE); // potential zero-copy
+  unsigned seq_offset = offsetof(entry_header_t, seq);
+  unsigned magic1_offset = offsetof(entry_header_t, magic1);
+  unsigned magic2_offset = offsetof(entry_header_t, magic2);
 
-  if (h.post_pad) {
-    bufferptr bp = buffer::create_static(post_pad, zero_buf);
-    bl.push_back(bp);
-  }
-  bl.append((const char*)&h, sizeof(h));
+  bufferptr ptr = ebl.buffers().front();
+  uint64_t _seq = seq;
+  uint64_t _queue_pos = queue_pos;
+  uint64_t magic2 = entry_header_t::make_magic(seq, orig_len, header.get_fsid64());
+  ptr.copy_in(seq_offset, sizeof(uint64_t), (char *)&_seq);
+  ptr.copy_in(magic1_offset, sizeof(uint64_t), (char *)&_queue_pos);
+  ptr.copy_in(magic2_offset, sizeof(uint64_t), (char *)&magic2);
 
+  unsigned post_offset  = size - sizeof(entry_header_t);
+  ptr.copy_in(post_offset + seq_offset, sizeof(uint64_t), (char *)&_seq);
+  ptr.copy_in(post_offset + magic1_offset, sizeof(uint64_t), (char *)&_queue_pos);
+  ptr.copy_in(post_offset + magic2_offset, sizeof(uint64_t), (char *)&magic2);
+
+  bl.claim_append(ebl);
   if (next_write.tracked_op)
     next_write.tracked_op->mark_event("write_thread_in_journal_buffer");
 
@@ -969,6 +945,7 @@ void FileJournal::align_bl(off64_t pos, bufferlist& bl)
   // make sure list segments are page aligned
   if (directio && (!bl.is_page_aligned() ||
 		   !bl.is_n_page_sized())) {
+    assert(0 == "bl should be align");
     bl.rebuild_page_aligned();
     dout(10) << __func__ << " total memcopy: " << bl.get_memcopy_count() << dendl;
     if ((bl.length() & ~CEPH_PAGE_MASK) != 0 ||
@@ -1170,7 +1147,7 @@ void FileJournal::flush()
 
 void FileJournal::write_thread_entry()
 {
-  dout(10) << "write_thread_entry start" << dendl;
+  dout(1) << "write_thread_entry start, pid " << ceph_gettid() << dendl;
   while (1) {
     {
       Mutex::Locker locker(writeq_lock);
@@ -1506,7 +1483,7 @@ void FileJournal::check_aio_completion()
 }
 #endif
 
-void FileJournal::submit_entry(uint64_t seq, bufferlist& e, int alignment,
+void FileJournal::submit_entry(uint64_t seq, bufferlist& e, uint32_t orig_len,
 			       Context *oncommit, TrackedOpRef osd_op)
 {
   // dump on queue
@@ -1516,7 +1493,7 @@ void FileJournal::submit_entry(uint64_t seq, bufferlist& e, int alignment,
   assert(e.length() > 0);
 
   throttle_ops.take(1);
-  throttle_bytes.take(e.length());
+  throttle_bytes.take(orig_len);
   if (osd_op)
     osd_op->mark_event("commit_queued_for_journal_write");
   if (logger) {
@@ -1534,7 +1511,7 @@ void FileJournal::submit_entry(uint64_t seq, bufferlist& e, int alignment,
 	seq, oncommit, ceph_clock_now(g_ceph_context), osd_op));
     if (writeq.empty())
       writeq_cond.Signal();
-    writeq.push_back(write_item(seq, e, alignment, osd_op));
+    writeq.push_back(write_item(seq, e, orig_len, osd_op));
   }
 }
 
@@ -1815,8 +1792,8 @@ bool FileJournal::read_entry(
   }
 
   dout(25) << errss.str() << dendl;
-  dout(2) << "No further valid entries found, journal is most likely valid"
-	  << dendl;
+  dout(2) << "No further valid entries found, journal is most likely valid "
+	  << ss.str() << dendl;
   return false;
 }
 

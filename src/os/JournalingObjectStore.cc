@@ -251,18 +251,18 @@ void JournalingObjectStore::ApplyManager::commit_finish()
 }
 
 void JournalingObjectStore::_op_journal_transactions(
-  bufferlist& tbl, int data_align,  uint64_t op,
+  bufferlist& tbl, uint32_t orig_len, uint64_t op,
   Context *onjournal, TrackedOpRef osd_op)
 {
   dout(10) << "op_journal_transactions " << op << dendl;
   if (journal && journal->is_writeable()) {
-    journal->submit_entry(op, tbl, data_align, onjournal, osd_op);
+    journal->submit_entry(op, tbl, orig_len, onjournal, osd_op);
   } else if (onjournal) {
     apply_manager.add_waiter(op, onjournal);
   }
 }
 
-int JournalingObjectStore::_op_journal_transactions_prepare(
+uint32_t JournalingObjectStore::_op_journal_transactions_prepare(
   list<ObjectStore::Transaction*>& tls, bufferlist& tbl)
 {
   dout(10) << "_op_journal_transactions_prepare " << tls << dendl;
@@ -278,5 +278,41 @@ int JournalingObjectStore::_op_journal_transactions_prepare(
     }
     ::encode(*t, tbl);
   }
-  return data_align;
+  // add it this entry
+  entry_header_t h;
+  unsigned head_size = sizeof(entry_header_t);
+  off64_t base_size = 2*head_size + tbl.length();
+  off64_t size = ROUND_UP_TO(base_size, journal->get_head_align());
+  unsigned post_pad = size - base_size;
+  memset(&h, 0, sizeof(h));
+  h.pre_pad = 0;
+  h.len = tbl.length();
+  h.post_pad = post_pad;
+  if (journal->need_entry_crc()) {
+    h.crc32c = tbl.crc32c(0);
+  } else {
+    h.crc32c = 0;
+  }
+  dout(10) << " len " << tbl.length() << " -> " << size
+       << " (head " << head_size << " pre_pad " << h.pre_pad
+       << " ebl " << tbl.length() << " post_pad " << post_pad << " tail " << head_size << ")"
+       << " (ebl alignment " << data_align << ")"
+       << dendl;
+  bufferlist bl;
+  bl.append((const char*)&h, sizeof(h));
+  bl.claim_append(tbl, buffer::list::CLAIM_ALLOW_NONSHAREABLE); // potential zero-copy
+  if (h.post_pad) {
+  // static zeroed buffer for alignment padding
+    if (!zero_buf) {
+      zero_buf = new char[journal->get_head_align()];
+      memset(zero_buf, 0, journal->get_head_align());
+    }
+
+    bufferptr bp = buffer::create_static(post_pad, zero_buf);
+    bl.push_back(bp);
+  }
+  bl.append((const char*)&h, sizeof(h));
+  bl.rebuild_page_aligned();
+  bl.swap(tbl);
+  return h.len;
 }
