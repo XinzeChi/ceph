@@ -6,6 +6,7 @@
 #include "librbd/ImageWatcher.h"
 #include "librbd/internal.h"
 #include <boost/scope_exit.hpp>
+#include <boost/assign/list_of.hpp>
 #include <utility>
 #include <vector>
 
@@ -364,4 +365,66 @@ TEST_F(TestInternal, MultipleResize) {
 
   ASSERT_EQ(0, librbd::get_size(ictx, &size));
   ASSERT_EQ(0U, size);
+}
+
+TEST_F(TestInternal, MetadatConfig) {
+  REQUIRE_FEATURE(RBD_FEATURE_LAYERING);
+
+  map<string, bool> test_confs = boost::assign::map_list_of(
+    "aaaaaaa", false)(
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", false)(
+    "cccccccccccccc", false);
+  map<string, bool>::iterator it = test_confs.begin();
+  int r;
+  librbd::ImageCtx *ictx;
+  ASSERT_EQ(0, open_image(m_image_name, &ictx));
+
+  r = librbd::metadata_set(ictx, it->first, "value1");
+  ASSERT_EQ(0, r);
+  ++it;
+  r = librbd::metadata_set(ictx, it->first, "value2");
+  ASSERT_EQ(0, r);
+  ++it;
+  r = librbd::metadata_set(ictx, it->first, "value3");
+  ASSERT_EQ(0, r);
+  r = librbd::metadata_set(ictx, "abcd", "value4");
+  ASSERT_EQ(0, r);
+  r = librbd::metadata_set(ictx, "xyz", "value5");
+  ASSERT_EQ(0, r);
+  map<string, bufferlist> pairs;
+  r = librbd::metadata_list(ictx, "", 0, &pairs);
+  ASSERT_EQ(0, r);
+  ASSERT_EQ(5, pairs.size());
+  r = librbd::metadata_remove(ictx, "abcd");
+  ASSERT_EQ(0, r);
+  r = librbd::metadata_remove(ictx, "xyz");
+  ASSERT_EQ(0, r);
+  pairs.clear();
+  r = librbd::metadata_list(ictx, "", 0, &pairs);
+  ASSERT_EQ(0, r);
+  ASSERT_EQ(3, pairs.size());
+  string val;
+  r = librbd::metadata_get(ictx, it->first, &val);
+  ASSERT_EQ(0, r);
+  ASSERT_STREQ(val.c_str(), "value3");
+}
+
+
+TEST_F(TestInternal, ThrottleConfigAware) {
+  librbd::ImageCtx *ictx;
+  ASSERT_EQ(0, open_image(m_image_name, &ictx));
+  ASSERT_EQ(0, librbd::metadata_set(ictx, "conf_rbd_throttle_bps_total", "1024000"));
+  ASSERT_EQ(0, librbd::metadata_set(ictx, "conf_rbd_throttle_iops_total", "50"));
+  ASSERT_EQ(0, librbd::metadata_set(ictx, "conf_rbd_throttle_bps_total_max", "10240000"));
+  ASSERT_EQ(0, librbd::metadata_set(ictx, "conf_rbd_throttle_iops_total_max", "500"));
+  close_image(ictx);
+
+  ASSERT_EQ(0, open_image(m_image_name, &ictx));
+  LeakyBucket buckets[BUCKETS_COUNT];
+  ictx->throttle.get_config(buckets);
+  ASSERT_TRUE(ictx->throttle.enabled());
+  ASSERT_EQ(buckets[THROTTLE_BPS_TOTAL].avg, 1024000);
+  ASSERT_EQ(buckets[THROTTLE_OPS_TOTAL].avg, 50);
+  ASSERT_EQ(buckets[THROTTLE_BPS_TOTAL].max, 10240000);
+  ASSERT_EQ(buckets[THROTTLE_OPS_TOTAL].max, 500);
 }

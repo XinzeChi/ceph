@@ -114,6 +114,10 @@ void usage()
 "                                              path or \"-\" for stdin\n"
 "  (cp | copy) <src> <dest>                    copy src image to dest\n"
 "  (mv | rename) <src> <dest>                  rename src image to dest\n"
+"  image-meta list <image-name>                image metadata list keys with values\n"
+"  image-meta get <image-name> <key>           image metadata get the value associated with the key\n"
+"  image-meta set <image-name> <key> <value>   image metadata set key with value\n"
+"  image-meta remove <image-name> <key>        image metadata remove the key and value associated\n"
 "  snap ls <image-name>                        dump list of image snapshots\n"
 "  snap create <snap-name>                     create a snapshot\n"
 "  snap rollback <snap-name>                   rollback image to snapshot\n"
@@ -2098,6 +2102,84 @@ done:
   return r;
 }
 
+static int do_metadata_list(librbd::Image& image, Formatter *f)
+{
+  map<string, bufferlist> pairs;
+  int r;
+  TextTable tbl;
+
+  r = image.metadata_list("", 0, &pairs);
+  if (r < 0) {
+    cerr << "failed to list metadata of image : " << cpp_strerror(r) << std::endl;
+    return r;
+  }
+
+  if (f) {
+    f->open_object_section("metadatas");
+  } else {
+    tbl.define_column("Key", TextTable::LEFT, TextTable::LEFT);
+    tbl.define_column("Value", TextTable::LEFT, TextTable::LEFT);
+  }
+
+  if (!pairs.empty()) {
+    bool one = (pairs.size() == 1);
+
+    if (!f) {
+      cout << "There " << (one ? "is " : "are ") << pairs.size()
+           << " metadata" << (one ? "" : "s") << " on this image.\n";
+    }
+
+    for (map<string, bufferlist>::iterator it = pairs.begin();
+         it != pairs.end(); ++it) {
+      string val(it->second.c_str(), it->second.length());
+      if (f) {
+        f->dump_string(it->first.c_str(), val.c_str());
+      } else {
+        tbl << it->first << val.c_str() << TextTable::endrow;
+      }
+    }
+    if (!f)
+      cout << tbl;
+  }
+
+  if (f) {
+    f->close_section();
+    f->flush(cout);
+  }
+  return 0;
+}
+
+static int do_metadata_set(librbd::Image& image, const char *key,
+                          const char *value)
+{
+  int r = image.metadata_set(key, value);
+  if (r < 0) {
+    cerr << "failed to set metadata " << key << " of image : " << cpp_strerror(r) << std::endl;
+  }
+  return r;
+}
+
+static int do_metadata_remove(librbd::Image& image, const char *key)
+{
+  int r = image.metadata_remove(key);
+  if (r < 0) {
+    cerr << "failed to remove metadata " << key << " of image : " << cpp_strerror(r) << std::endl;
+  }
+  return r;
+}
+
+static int do_metadata_get(librbd::Image& image, const char *key)
+{
+  string s;
+  int r = image.metadata_get(key, &s);
+  if (r < 0) {
+    cerr << "failed to get metadata " << key << " of image : " << cpp_strerror(r) << std::endl;
+    return r;
+  }
+  cout << s << std::endl;
+  return r;
+}
+
 static int do_copy(librbd::Image &src, librados::IoCtx& dest_pp,
 		   const char *destname)
 {
@@ -2457,11 +2539,15 @@ enum {
   OPT_LOCK_REMOVE,
   OPT_BENCH_WRITE,
   OPT_MERGE_DIFF,
+  OPT_METADATA_LIST,
+  OPT_METADATA_SET,
+  OPT_METADATA_GET,
+  OPT_METADATA_REMOVE,
 };
 
-static int get_cmd(const char *cmd, bool snapcmd, bool lockcmd)
+static int get_cmd(const char *cmd, bool snapcmd, bool lockcmd, bool metacmd)
 {
-  if (!snapcmd && !lockcmd) {
+  if (!snapcmd && !lockcmd && !metacmd) {
     if (strcmp(cmd, "ls") == 0 ||
         strcmp(cmd, "list") == 0)
       return OPT_LIST;
@@ -2528,6 +2614,15 @@ static int get_cmd(const char *cmd, bool snapcmd, bool lockcmd)
       return OPT_SNAP_PROTECT;
     if (strcmp(cmd, "unprotect") == 0)
       return OPT_SNAP_UNPROTECT;
+  } else if (metacmd) {
+    if (strcmp(cmd, "list") == 0)
+      return OPT_METADATA_LIST;
+    if (strcmp(cmd, "set") == 0)
+      return OPT_METADATA_SET;
+    if (strcmp(cmd, "get") == 0)
+      return OPT_METADATA_GET;
+    if (strcmp(cmd, "remove") == 0)
+      return OPT_METADATA_REMOVE;
   } else {
     if (strcmp(cmd, "ls") == 0 ||
         strcmp(cmd, "list") == 0)
@@ -2594,7 +2689,7 @@ int main(int argc, const char **argv)
     *devpath = NULL, *lock_cookie = NULL, *lock_client = NULL,
     *lock_tag = NULL, *output_format = "plain",
     *fromsnapname = NULL,
-    *first_diff = NULL, *second_diff = NULL;
+    *first_diff = NULL, *second_diff = NULL, *key = NULL, *value = NULL;
   bool lflag = false;
   int pretty_format = 0;
   long long stripe_unit = 0, stripe_count = 0;
@@ -2741,16 +2836,23 @@ int main(int argc, const char **argv)
       cerr << "rbd: which snap command do you want?" << std::endl;
       return EXIT_FAILURE;
     }
-    opt_cmd = get_cmd(*i, true, false);
+    opt_cmd = get_cmd(*i, true, false, false);
   } else if (strcmp(*i, "lock") == 0) {
     i = args.erase(i);
     if (i == args.end()) {
       cerr << "rbd: which lock command do you want?" << std::endl;
       return EXIT_FAILURE;
     }
-    opt_cmd = get_cmd(*i, false, true);
+    opt_cmd = get_cmd(*i, false, true, false);
+  } else if (strcmp(*i, "image-meta") == 0) {
+    i = args.erase(i);
+    if (i == args.end()) {
+      cerr << "rbd: which image-meta command do you want?" << std::endl;
+      return EXIT_FAILURE;
+    }
+    opt_cmd = get_cmd(*i, false, false, true);
   } else {
-    opt_cmd = get_cmd(*i, false, false);
+    opt_cmd = get_cmd(*i, false, false, false);
   }
   if (opt_cmd == OPT_NO_CMD) {
     cerr << "rbd: error parsing command '" << *i << "'; -h or --help for usage" << std::endl;
@@ -2791,6 +2893,7 @@ if (!set_conf_param(v, p1, p2, p3)) { \
       case OPT_MAP:
       case OPT_BENCH_WRITE:
       case OPT_LOCK_LIST:
+      case OPT_METADATA_LIST:
       case OPT_DIFF:
 	SET_CONF_PARAM(v, &imgname, NULL, NULL);
 	break;
@@ -2824,6 +2927,13 @@ if (!set_conf_param(v, p1, p2, p3)) { \
 	break;
       case OPT_LOCK_REMOVE:
 	SET_CONF_PARAM(v, &imgname, &lock_client, &lock_cookie);
+	break;
+      case OPT_METADATA_SET:
+	SET_CONF_PARAM(v, &imgname, &key, &value);
+	break;
+      case OPT_METADATA_GET:
+      case OPT_METADATA_REMOVE:
+	SET_CONF_PARAM(v, &imgname, &key, NULL);
 	break;
     default:
 	assert(0);
@@ -2861,7 +2971,7 @@ if (!set_conf_param(v, p1, p2, p3)) { \
       opt_cmd != OPT_INFO && opt_cmd != OPT_LIST &&
       opt_cmd != OPT_SNAP_LIST && opt_cmd != OPT_LOCK_LIST &&
       opt_cmd != OPT_CHILDREN && opt_cmd != OPT_DIFF &&
-      opt_cmd != OPT_STATUS) {
+      opt_cmd != OPT_METADATA_LIST && opt_cmd != OPT_STATUS) {
     cerr << "rbd: command doesn't use output formatting"
 	 << std::endl;
     return EXIT_FAILURE;
@@ -3040,11 +3150,14 @@ if (!set_conf_param(v, p1, p2, p3)) { \
        opt_cmd == OPT_EXPORT || opt_cmd == OPT_EXPORT_DIFF || opt_cmd == OPT_COPY ||
        opt_cmd == OPT_DIFF ||
        opt_cmd == OPT_CHILDREN || opt_cmd == OPT_LOCK_LIST ||
+       opt_cmd == OPT_METADATA_SET || opt_cmd == OPT_METADATA_LIST ||
+       opt_cmd == OPT_METADATA_REMOVE || opt_cmd == OPT_METADATA_GET ||
        opt_cmd == OPT_STATUS)) {
 
     if (opt_cmd == OPT_INFO || opt_cmd == OPT_SNAP_LIST ||
 	opt_cmd == OPT_EXPORT || opt_cmd == OPT_EXPORT || opt_cmd == OPT_COPY ||
 	opt_cmd == OPT_CHILDREN || opt_cmd == OPT_LOCK_LIST ||
+        opt_cmd == OPT_METADATA_LIST ||
         opt_cmd == OPT_STATUS || opt_cmd == OPT_WATCH) {
       r = rbd.open_read_only(io_ctx, image, imgname, NULL);
     } else {
@@ -3449,6 +3562,38 @@ if (!set_conf_param(v, p1, p2, p3)) { \
     r = do_bench_write(image, bench_io_size, bench_io_threads, bench_bytes, bench_pattern);
     if (r < 0) {
       cerr << "bench-write failed: " << cpp_strerror(-r) << std::endl;
+      return -r;
+    }
+    break;
+
+  case OPT_METADATA_LIST:
+    r = do_metadata_list(image, formatter.get());
+    if (r < 0) {
+      cerr << "rbd: listing metadata failed: " << cpp_strerror(r) << std::endl;
+      return -r;
+    }
+    break;
+
+  case OPT_METADATA_SET:
+    r = do_metadata_set(image, key, value);
+    if (r < 0) {
+      cerr << "rbd: setting metadata failed: " << cpp_strerror(r) << std::endl;
+      return -r;
+    }
+    break;
+
+  case OPT_METADATA_REMOVE:
+    r = do_metadata_remove(image, key);
+    if (r < 0) {
+      cerr << "rbd: removing metadata failed: " << cpp_strerror(r) << std::endl;
+      return -r;
+    }
+    break;
+
+  case OPT_METADATA_GET:
+    r = do_metadata_get(image, key);
+    if (r < 0) {
+      cerr << "rbd: getting metadata failed: " << cpp_strerror(r) << std::endl;
       return -r;
     }
     break;

@@ -38,6 +38,7 @@ namespace librbd {
 
     virtual bool should_complete(int r) = 0;
     virtual void send() = 0;
+    uint64_t get_object_len() const { return m_object_len; }
 
   protected:
     void read_from_parent(vector<pair<uint64_t,uint64_t> >& image_extents,

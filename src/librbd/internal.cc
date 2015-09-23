@@ -386,7 +386,7 @@ int invoke_async_request(ImageCtx *ictx, const std::string& request_type,
 
     int r;
     CephContext *cct = ictx->cct;
-    SimpleThrottle throttle(cct->_conf->rbd_concurrent_management_ops, true);
+    SimpleThrottle throttle(ictx->concurrent_management_ops, true);
 
     for (uint64_t i = 0; i < numseg; i++) {
       string oid = ictx->get_object_name(i);
@@ -1140,6 +1140,7 @@ reprotect_and_return_err:
     int remove_r;
     librbd::NoOpProgressContext no_op;
     ImageCtx *c_imctx = NULL;
+    map<string, bufferlist> pairs;
     // make sure parent snapshot exists
     ImageCtx *p_imctx = new ImageCtx(p_name, "", p_snap_name, p_ioctx, true);
     r = open_image(p_imctx);
@@ -1204,6 +1205,18 @@ reprotect_and_return_err:
     if (r < 0) {
       lderr(cct) << "couldn't add child: " << r << dendl;
       goto err_close_child;
+    }
+
+    r = cls_client::metadata_list(&p_ioctx, p_imctx->header_oid, "", 0, &pairs);
+    if (r < 0 && r != -EOPNOTSUPP && r != -EIO) {
+      lderr(cct) << "couldn't list metadata: " << r << dendl;
+      goto err_close_child;
+    } else if (r == 0 && !pairs.empty()) {
+      r = cls_client::metadata_set(&c_ioctx, c_imctx->header_oid, pairs);
+      if (r < 0) {
+        lderr(cct) << "couldn't set metadata: " << r << dendl;
+        goto err_close_child;
+      }
     }
 
     p_imctx->md_lock.get_write();
@@ -1443,9 +1456,9 @@ reprotect_and_return_err:
     ictx->parent = new ImageCtx("", parent_image_id, NULL, p_ioctx, true);
 
     // set rados flags for reading the parent image
-    if (ictx->cct->_conf->rbd_balance_parent_reads)
+    if (ictx->balance_parent_reads)
       ictx->parent->set_read_flag(librados::OPERATION_BALANCE_READS);
-    else if (ictx->cct->_conf->rbd_localize_parent_reads)
+    else if (ictx->localize_parent_reads)
       ictx->parent->set_read_flag(librados::OPERATION_LOCALIZE_READS);
 
     r = open_image(ictx->parent);
@@ -2319,7 +2332,21 @@ reprotect_and_return_err:
       return -EINVAL;
     }
     int r;
-    SimpleThrottle throttle(cct->_conf->rbd_concurrent_management_ops, false);
+    map<string, bufferlist> pairs;
+
+    r = cls_client::metadata_list(&src->md_ctx, src->header_oid, "", 0, &pairs);
+    if (r < 0 && r != -EOPNOTSUPP && r != -EIO) {
+      lderr(cct) << "couldn't list metadata: " << r << dendl;
+      return r;
+    } else if (r == 0 && !pairs.empty()) {
+      r = cls_client::metadata_set(&dest->md_ctx, dest->header_oid, pairs);
+      if (r < 0) {
+        lderr(cct) << "couldn't set metadata: " << r << dendl;
+        return r;
+      }
+    }
+
+    SimpleThrottle throttle(src->concurrent_management_ops, false);
     uint64_t period = src->get_stripe_period();
     for (uint64_t offset = 0; offset < src_size; offset += period) {
       if (throttle.pending_error()) {
@@ -2688,8 +2715,7 @@ reprotect_and_return_err:
       return -EINVAL;
     }
 
-    md_config_t *conf = ictx->cct->_conf;
-    if (conf->rbd_blacklist_on_break_lock) {
+    if (ictx->blacklist_on_break_lock) {
       typedef std::map<rados::cls::lock::locker_id_t,
 		       rados::cls::lock::locker_info_t> Lockers;
       Lockers lockers;
@@ -2719,7 +2745,7 @@ reprotect_and_return_err:
       RWLock::RLocker locker(ictx->md_lock);
       librados::Rados rados(ictx->md_ctx);
       r = rados.blacklist_add(client_address,
-			      conf->rbd_blacklist_expire_seconds);
+			      ictx->blacklist_expire_seconds);
       if (r < 0) {
         lderr(ictx->cct) << "unable to blacklist client: " << cpp_strerror(r)
           	       << dendl;
@@ -3370,7 +3396,9 @@ reprotect_and_return_err:
 	c->add_request();
 
 	req->set_op_flags(op_flags);
-	req->send();
+        if (!ictx->io_limits_intercept(req, true)) {
+          req->send();
+        }
       }
     }
 
@@ -3381,6 +3409,60 @@ reprotect_and_return_err:
     ictx->perfcounter->inc(l_librbd_aio_wr_bytes, clip_len);
   }
 
+  int metadata_get(ImageCtx *ictx, const string &key, string *value)
+  {
+    CephContext *cct = ictx->cct;
+    ldout(cct, 20) << "metadata_get " << ictx << " key=" << key << dendl;
+
+    int r = ictx_check(ictx);
+    if (r < 0) {
+      return r;
+    }
+
+    return cls_client::metadata_get(&ictx->md_ctx, ictx->header_oid, key, value);
+  }
+
+  int metadata_set(ImageCtx *ictx, const string &key, const string &value)
+  {
+    CephContext *cct = ictx->cct;
+    ldout(cct, 20) << "metadata_set " << ictx << " key=" << key << " value=" << value << dendl;
+
+    int r = ictx_check(ictx);
+    if (r < 0) {
+      return r;
+    }
+
+    map<string, bufferlist> data;
+    data[key].append(value);
+    return cls_client::metadata_set(&ictx->md_ctx, ictx->header_oid, data);
+  }
+
+  int metadata_remove(ImageCtx *ictx, const string &key)
+  {
+    CephContext *cct = ictx->cct;
+    ldout(cct, 20) << "metadata_remove " << ictx << " key=" << key << dendl;
+
+    int r = ictx_check(ictx);
+    if (r < 0) {
+      return r;
+    }
+
+    return cls_client::metadata_remove(&ictx->md_ctx, ictx->header_oid, key);
+  }
+
+  int metadata_list(ImageCtx *ictx, const string &start, uint64_t max, map<string, bufferlist> *pairs)
+  {
+    CephContext *cct = ictx->cct;
+    ldout(cct, 20) << "metadata_list " << ictx << dendl;
+
+    int r = ictx_check(ictx);
+    if (r < 0) {
+      return r;
+    }
+
+    return cls_client::metadata_list(&ictx->md_ctx, ictx->header_oid, start, max, pairs);
+  }
+  
   void aio_discard(ImageCtx *ictx, uint64_t off, uint64_t len, AioCompletion *c)
   {
     CephContext *cct = ictx->cct;
@@ -3525,8 +3607,8 @@ reprotect_and_return_err:
       total_bytes += p->second;
     }
     ictx->md_lock.get_write();
-    bool abort = conf->rbd_readahead_disable_after_bytes != 0 &&
-      ictx->total_bytes_read > (uint64_t)conf->rbd_readahead_disable_after_bytes;
+    bool abort = ictx->readahead_disable_after_bytes != 0 &&
+      ictx->total_bytes_read > ictx->readahead_disable_after_bytes;
     ictx->total_bytes_read += total_bytes;
     ictx->snap_lock.get_read();
     uint64_t image_size = ictx->get_image_size(ictx->snap_id);
@@ -3574,10 +3656,9 @@ reprotect_and_return_err:
     }
 
     // readahead
-    const md_config_t *conf = ictx->cct->_conf;
-    if (ictx->object_cacher && conf->rbd_readahead_max_bytes > 0 &&
+    if (ictx->object_cacher && ictx->readahead_max_bytes > 0 &&
 	!(op_flags & LIBRADOS_OP_FLAG_FADVISE_RANDOM)) {
-      readahead(ictx, image_extents, conf);
+      readahead(ictx, image_extents, ictx->cct->_conf);
     }
 
     snap_t snap_id;
@@ -3635,8 +3716,8 @@ reprotect_and_return_err:
 	  ictx->aio_read_from_cache(q->oid, q->objectno, &req->data(),
 				    q->length, q->offset,
 				    cache_comp, op_flags);
-	} else {
-	  req->send();
+	} else if (!ictx->io_limits_intercept(req, false)) {
+          req->send();
 	}
       }
     }
