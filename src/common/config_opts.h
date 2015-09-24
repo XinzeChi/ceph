@@ -836,7 +836,8 @@ OPTION(filestore_fd_cache_shards, OPT_INT, 16)   // FD number of shards
 OPTION(filestore_fd_cache_random, OPT_BOOL, false)
 OPTION(filestore_pgmeta_cache_shards, OPT_INT, 16)
 OPTION(filestore_pgmeta_cache_shard_bytes, OPT_U64, 2 << 20)
-OPTION(filestore_op_finisher_threads, OPT_INT, 4)
+OPTION(filestore_ondisk_finisher_threads, OPT_INT, 4)
+OPTION(filestore_apply_finisher_threads, OPT_INT, 4)
 OPTION(filestore_dump_file, OPT_STR, "")         // file onto which store transaction dumps
 OPTION(filestore_kill_at, OPT_INT, 0)            // inject a failure at the n'th opportunity
 OPTION(filestore_inject_stall, OPT_INT, 0)       // artificially stall for N seconds in op queue thread
