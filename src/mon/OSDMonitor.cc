@@ -50,6 +50,7 @@
 
 #include "common/config.h"
 #include "common/errno.h"
+#include "global/signal_handler.h"
 
 #include "erasure-code/ErasureCodePlugin.h"
 
@@ -116,6 +117,134 @@ void OSDMonitor::create_initial()
   pending_inc.full_crc = newmap.get_crc();
   dout(20) << " full crc " << pending_inc.full_crc << dendl;
 }
+
+string OSDMonitor::AESCrypt::encrypt(string plain)
+{
+  string cipher;
+  string encoded;
+
+  try {
+    CBC_Mode< AES >::Encryption e;
+    e.SetKeyWithIV(key, CryptoPP::AES::DEFAULT_KEYLENGTH*sizeof(key[0]), iv);
+    StringSource s(plain, true, new StreamTransformationFilter(e,new StringSink(cipher)));
+  }
+  catch(const CryptoPP::Exception& e) {
+    encoded.clear();
+    return encoded;
+  }
+  encoded.clear();
+  StringSource(cipher, true, new HexEncoder(new StringSink(encoded)));
+  return encoded;
+}
+
+string OSDMonitor::AESCrypt::decrypt(string cipher_hex)
+{
+  string decoded;
+  string recovered;
+  //generic_dout(0) << "AESCrypt::decrypt: cipher_hex = " << cipher_hex << dendl;
+
+  decoded.clear();
+  StringSource(cipher_hex, true, new HexDecoder(new StringSink(decoded)));
+
+  try {
+    CBC_Mode< AES >::Decryption d;
+    d.SetKeyWithIV(key, CryptoPP::AES::DEFAULT_KEYLENGTH*sizeof(key[0]), iv);
+
+    StringSource s(decoded, true, new StreamTransformationFilter(d,new StringSink(recovered)));
+  } catch(const CryptoPP::Exception& e) {
+    generic_dout(0) << "OSDMonitor::AESCrypt::" <<__func__ << ": " << e.what() << dendl;
+    generic_dout(0) << "OSDMonitor::AESCrypt::" <<__func__ << ": got an invalid SN" << dendl;
+    recovered.clear();
+  }
+  return recovered;
+}
+
+int OSDMonitor::get_ceph_osds_from_sn(string &sn) {
+  if (sn.length() != aes_crypt.sn_size) {
+    dout(0) << "serial number length must be " << aes_crypt.sn_size << dendl;
+    return 0;
+  }
+  string plain;
+  string cipher;
+  int lens[] = {8, 4, 4, 4, 12};
+  int count = 5; //sizeof(lens)/sizeof(int);
+  int i = 0;
+  int pos = 0;
+  int osds = 0;
+  const char *ptr;
+
+  cipher = sn.substr(0,lens[0]);
+  for (i = 0; i < count - 1; i++) {
+    pos += 1 + lens[i]; //with "-"
+    if (sn.substr(pos - 1, 1) != "-")
+       return 0;
+    cipher += sn.substr(pos, lens[i+1]);
+  }
+  plain = aes_crypt.decrypt(cipher);
+  ptr = strstr(plain.c_str(), ":");
+  if (ptr)
+    osds = atoi(ptr + 1);
+  return osds;
+}
+
+int OSDMonitor::get_ceph_serial_number(bufferlist &bl) {
+  string prefix = "mon_config_key";
+  string key = "SN";
+
+  int r = mon->store->get(prefix, key, bl);
+  if (r < 0) {
+    dout(0) << "get SN failed r = " << r << dendl;
+  }
+  return r;
+}
+
+bool OSDMonitor::check_ceph_serial_number() {
+  bufferlist bl;
+  string plain_text;
+  string cipher_hex;
+  const int SN_SIZE = aes_crypt.sn_size;
+  unsigned int default_osds = NO_SN_MAX_OSD;
+  int r;
+  unsigned int osds;
+  r = get_ceph_serial_number(bl);
+  if (r < 0) {
+    osds = default_osds;
+  } else {
+    bl.copy(0, bl.length(), cipher_hex);
+    if (bl.length() == 0 || bl.length() % SN_SIZE != 0) {
+      osds = default_osds;
+    } else {
+      osds = get_ceph_osds_from_sn(cipher_hex);
+    }
+  }
+
+  if (osds < default_osds)
+    osds = default_osds;
+
+  dout(10) << __func__ << " osds = " << osds << dendl;
+  if (osdmap.get_num_osds() > osds)
+    return false;
+  return true;
+}
+
+void OSDMonitor::shutdown_monitor() {
+  if (check_ceph_serial_number()) {
+    dout(0) << __func__ << ": cancel shoutdown this monitor" << dendl;
+    return;
+  }
+  generic_dout(0) << "** num_osds: " << osdmap.get_num_osds() << " >" << NO_SN_MAX_OSD <<" **" << dendl;
+  generic_dout(0) << "** Shutdown via OSDMonitor **" << dendl;
+  queue_async_signal(SIGINT);
+}
+
+class C_Mon_Shutdown : public Context {
+  OSDMonitor *osdmon;
+public:
+  C_Mon_Shutdown(OSDMonitor *osdm) : osdmon(osdm) {}
+  void finish(int r) {
+    osdmon->shutdown_monitor();
+  }
+};
 
 void OSDMonitor::update_from_paxos(bool *need_bootstrap)
 {
@@ -260,6 +389,13 @@ void OSDMonitor::update_from_paxos(bool *need_bootstrap)
       t = MonitorDBStore::TransactionRef();
       tx_size = 0;
     }
+  }
+
+  if (!check_ceph_serial_number()) {
+    double delay = SHUTDOWN_MON_DELAY;
+    dout(0) << "will shoutdown monitor after " << delay << " seconds" << dendl;
+    C_Mon_Shutdown *shutdown = new C_Mon_Shutdown(this);
+    mon->timer.add_event_after(delay, shutdown);
   }
 
   if (t) {
