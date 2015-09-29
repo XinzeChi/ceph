@@ -364,6 +364,11 @@ unittest_ipaddr_LDADD = $(UNITTEST_LDADD) $(CEPH_GLOBAL)
 unittest_ipaddr_CXXFLAGS = $(UNITTEST_CXXFLAGS)
 check_PROGRAMS += unittest_ipaddr
 
+unittest_global_SOURCES = test/test_global.cc
+unittest_global_LDADD = $(UNITTEST_LDADD) $(CEPH_GLOBAL)
+unittest_global_CXXFLAGS = $(UNITTEST_CXXFLAGS)
+check_PROGRAMS += unittest_global
+
 unittest_texttable_SOURCES = test/test_texttable.cc
 unittest_texttable_LDADD = $(LIBCOMMON) $(UNITTEST_LDADD)
 unittest_texttable_CXXFLAGS = $(UNITTEST_CXXFLAGS)
