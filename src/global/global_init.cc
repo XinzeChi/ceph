@@ -56,6 +56,30 @@ static const char* c_str_or_null(const std::string &str)
   return str.c_str();
 }
 
+static string apply_daemon_local_conf(md_config_t *conf, uint32_t module_type) {
+  struct stat stat;
+  string local_conf;
+  switch (module_type) {
+    case CEPH_ENTITY_TYPE_MON:
+      local_conf = conf->mon_data;
+      break;
+    case CEPH_ENTITY_TYPE_OSD:
+      local_conf = conf->osd_data;
+      break;
+    case CEPH_ENTITY_TYPE_MDS:
+      local_conf = conf->mds_data;
+      break;
+    default:
+      return "";
+  }
+
+  local_conf += "/conf";
+  if (!::stat(local_conf.c_str(), &stat)) {
+    return local_conf;
+  }
+  return "";
+}
+
 void global_pre_init(std::vector < const char * > *alt_def_args,
 		     std::vector < const char* >& args,
 		     uint32_t module_type, code_environment_t code_env,
@@ -104,6 +128,16 @@ void global_pre_init(std::vector < const char * > *alt_def_args,
   conf->parse_argv(args); // argv override
 
   // Expand metavariables. Invoke configuration observers.
+  conf->apply_changes(NULL);
+
+  string local_conf = apply_daemon_local_conf(conf, module_type);
+  if (local_conf.size()) {
+    ret = conf->parse_config_files(c_str_or_null(local_conf), &parse_errors, &cerr, flags);
+    if(ret < 0) {
+      dout_emergency("global_init: error reading local config file.\n");
+      _exit(1);
+    }
+  }
   conf->apply_changes(NULL);
 
   // Now we're ready to complain about config file parse errors
