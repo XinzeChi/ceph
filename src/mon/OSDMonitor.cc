@@ -187,9 +187,35 @@ int OSDMonitor::get_ceph_osds_from_sn(string &sn) {
   return osds;
 }
 
+void OSDMonitor::parse_ceph_sn(string &sn, time_t &time, unsigned &osds) {
+  time = 0;
+  osds = 0;
+  if (sn.length() != aes_crypt.sn_size) {
+    dout(0) << "serial number length must be " << aes_crypt.sn_size << dendl;
+    return;
+  }
+  string plain;
+  string cipher;
+  int lens[] = {8, 4, 4, 4, 12};
+  int count = 5; //sizeof(lens)/sizeof(int);
+  int i = 0;
+  int pos = 0;
+
+  cipher = sn.substr(0,lens[0]);
+  for (i = 0; i < count - 1; i++) {
+    pos += 1 + lens[i]; //with "-"
+    if (sn.substr(pos - 1, 1) != "-")
+       return;
+    cipher += sn.substr(pos, lens[i+1]);
+  }
+  plain = aes_crypt.decrypt(cipher);
+  time = strtoul(plain.substr(0, 10).c_str(), NULL, 10);
+  osds = atoi(plain.substr(10,5).c_str());
+}
+
 int OSDMonitor::get_ceph_serial_number(bufferlist &bl) {
   string prefix = "mon_config_key";
-  string key = "SN";
+  string key = "XSKY-SN";
 
   int r = mon->store->get(prefix, key, bl);
   if (r < 0) {
@@ -205,25 +231,38 @@ bool OSDMonitor::check_ceph_serial_number() {
   const int SN_SIZE = aes_crypt.sn_size;
   unsigned int default_osds = NO_SN_MAX_OSD;
   int r;
+  time_t expire_time;
+  time_t now_time;
   unsigned int osds;
+  time(&now_time);
+  expire_time = now_time;
   r = get_ceph_serial_number(bl);
   if (r < 0) {
+    expire_time = now_time + DEFAULT_EXPIRE_INTERVAL;
     osds = default_osds;
   } else {
     bl.copy(0, bl.length(), cipher_hex);
     if (bl.length() == 0 || bl.length() % SN_SIZE != 0) {
+      expire_time = now_time + DEFAULT_EXPIRE_INTERVAL;
       osds = default_osds;
     } else {
-      osds = get_ceph_osds_from_sn(cipher_hex);
+      parse_ceph_sn(cipher_hex, expire_time, osds);
+      if (osds < default_osds)
+	osds = default_osds;
     }
   }
 
-  if (osds < default_osds)
-    osds = default_osds;
-
-  dout(10) << __func__ << " osds = " << osds << dendl;
-  if (osdmap.get_num_osds() > osds)
+  dout(10) << __func__ << " xsky permit expire time " << expire_time
+	<< ", max osd " << osds << dendl;
+  if (now_time >= expire_time) {
+    dout(0) << __func__ << " reach or exceed expire time" << dendl;
     return false;
+  }
+  if (osdmap.get_num_osds() > osds) {
+    dout(0) << __func__ << " osdmap's osds " << osdmap.get_num_osds()
+	<< " > license quota osds " << osds << dendl;
+    return false;
+  }
   return true;
 }
 
@@ -232,7 +271,6 @@ void OSDMonitor::shutdown_monitor() {
     dout(0) << __func__ << ": cancel shoutdown this monitor" << dendl;
     return;
   }
-  generic_dout(0) << "** num_osds: " << osdmap.get_num_osds() << " >" << NO_SN_MAX_OSD <<" **" << dendl;
   generic_dout(0) << "** Shutdown via OSDMonitor **" << dendl;
   queue_async_signal(SIGINT);
 }
@@ -393,7 +431,7 @@ void OSDMonitor::update_from_paxos(bool *need_bootstrap)
 
   if (!check_ceph_serial_number()) {
     double delay = SHUTDOWN_MON_DELAY;
-    dout(0) << "will shoutdown monitor after " << delay << " seconds" << dendl;
+    dout(0) << " exceed quota, will check after " << delay << " seconds" << dendl;
     C_Mon_Shutdown *shutdown = new C_Mon_Shutdown(this);
     mon->timer.add_event_after(delay, shutdown);
   }

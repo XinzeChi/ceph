@@ -64,6 +64,7 @@ class Monitor;
 
 #define OSD_METADATA_PREFIX "osd_metadata"
 #define NO_SN_MAX_OSD 10
+#define DEFAULT_EXPIRE_INTERVAL (90*24*3600)
 #define SHUTDOWN_MON_DELAY 300.0
 
 /// information about a particular peer's failure reports for one osd
@@ -214,6 +215,7 @@ private:
   // svc
 public:  
   void create_initial();
+  void parse_ceph_sn(string &sn, time_t &time, unsigned &osds);
   int get_ceph_osds_from_sn(string &sn);
   int get_ceph_serial_number(bufferlist &bl);
   bool check_ceph_serial_number();
