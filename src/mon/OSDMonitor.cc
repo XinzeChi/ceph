@@ -159,34 +159,6 @@ string OSDMonitor::AESCrypt::decrypt(string cipher_hex)
   return recovered;
 }
 
-int OSDMonitor::get_ceph_osds_from_sn(string &sn) {
-  if (sn.length() != aes_crypt.sn_size) {
-    dout(0) << "serial number length must be " << aes_crypt.sn_size << dendl;
-    return 0;
-  }
-  string plain;
-  string cipher;
-  int lens[] = {8, 4, 4, 4, 12};
-  int count = 5; //sizeof(lens)/sizeof(int);
-  int i = 0;
-  int pos = 0;
-  int osds = 0;
-  const char *ptr;
-
-  cipher = sn.substr(0,lens[0]);
-  for (i = 0; i < count - 1; i++) {
-    pos += 1 + lens[i]; //with "-"
-    if (sn.substr(pos - 1, 1) != "-")
-       return 0;
-    cipher += sn.substr(pos, lens[i+1]);
-  }
-  plain = aes_crypt.decrypt(cipher);
-  ptr = strstr(plain.c_str(), ":");
-  if (ptr)
-    osds = atoi(ptr + 1);
-  return osds;
-}
-
 void OSDMonitor::parse_ceph_sn(string &sn, time_t &time, unsigned &osds) {
   time = 0;
   osds = 0;
