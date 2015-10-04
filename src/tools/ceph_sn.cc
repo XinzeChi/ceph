@@ -168,7 +168,6 @@ string gen_sn(struct sn_item *sn_item)
   //cout << "sn_plain: " << plain << endl;
   cipher = encrypt(plain);
   //cout << "cipher: " << cipher << endl;
-  int N = 32;
   int lens[] = {8, 4, 4, 4, 12};
   int count = 5; //sizeof(lens)/sizeof(int);
   int i = 0;
@@ -235,7 +234,7 @@ int main(int argc, char *argv[])
 
     struct sn_item sn(atoi(argv[2]), strtoul(argv[3], NULL, 10));
     const time_t unixtime_max = 9999999999; // 10 chars
-    const unsigned max_osds = 99999; // 5 chars
+    const int max_osds = 99999; // 5 chars
     if (sn.t > unixtime_max) {
       cout << "time: "<< sn.t << " larger than unixtime_max: " << unixtime_max << endl;
       exit(-1);

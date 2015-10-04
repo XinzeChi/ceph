@@ -36,7 +36,7 @@ Requires:	parted
 Requires:	util-linux
 Requires:	hdparm
 Requires:	cryptsetup
-Requires:	cryptopp-devel
+Requires:	cryptopp
 Requires(post):	binutils
 BuildRequires:	gcc-c++
 BuildRequires:	boost-devel
