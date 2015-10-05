@@ -1,6 +1,6 @@
 #!/bin/bash
 # Min Chen <chenmin@xsky.com> 2015
-# unitest for SN
+# unittest for SN
 
 declare -a ids;
 created=0
@@ -107,10 +107,10 @@ function TEST_sn_down()
 {
     local func=TEST_sn_down
 
-    SN=`./ceph-sn encrypt 10 1000`
+    SN="36472538-EAB0-E008-FC29-9A1E0937AFC3"
     ./ceph config-key put XSKY-SN $SN || return 1
 
-    # osdmap osds > 10, triger shutdown event
+    # osdmap osds > 10, trigger shutdown event
     if [ $created -ne 1 ];then
         create_osds 11
     fi
@@ -139,9 +139,10 @@ function TEST_sn_on()
 	create_osds $((11 - $osds))
     fi
 
-    # osdmap osds > 10, triger shutdown event
+    # osdmap osds > 10, trigger shutdown event
     sleep 200
-    SN=`./ceph-sn encrypt 100 1000`
+
+    SN="9191D01F-C26B-D4E2-CE76-B9700C35D2D2"
     ./ceph config-key put XSKY-SN $SN || return 1
     sleep 120
 
