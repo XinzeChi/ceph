@@ -447,8 +447,10 @@ private:
   uint64_t op_queue_len, op_queue_bytes;
   Cond op_throttle_cond;
   Mutex op_throttle_lock;
-  const int op_finisher_num;
-  vector<Finisher*> op_finishers;
+  const int ondisk_finisher_num;
+  const int apply_finisher_num;
+  vector<Finisher*> ondisk_finishers;
+  vector<Finisher*> apply_finishers;
 
   ThreadPool op_tp;
   struct OpWQ : public ThreadPool::WorkQueue<OpSequencer> {

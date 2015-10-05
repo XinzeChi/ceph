@@ -538,7 +538,8 @@ FileStore::FileStore(const std::string &base, const std::string &jdev, osflagbit
   next_osr_id(0),
   op_queue_len(0), op_queue_bytes(0),
   op_throttle_lock("FileStore::op_throttle_lock"),
-  op_finisher_num(g_conf->filestore_op_finisher_threads),
+  ondisk_finisher_num(g_conf->filestore_ondisk_finisher_threads),
+  apply_finisher_num(g_conf->filestore_apply_finisher_threads),
   op_tp(g_ceph_context, "FileStore::op_tp", g_conf->filestore_op_threads, "filestore_op_threads"),
   op_wq(this, g_conf->filestore_op_thread_timeout,
 	g_conf->filestore_op_thread_suicide_timeout, &op_tp),
@@ -573,9 +574,17 @@ FileStore::FileStore(const std::string &base, const std::string &jdev, osflagbit
   m_filestore_max_inline_xattrs(0)
 {
   m_filestore_kill_at.set(g_conf->filestore_kill_at);
-  for (int i = 0; i < op_finisher_num; ++i) {
-    Finisher *f = new Finisher(g_ceph_context);
-    op_finishers.push_back(f);
+  for (int i = 0; i < ondisk_finisher_num; ++i) {
+    ostringstream oss;
+    oss << "filestore-ondisk-" << i;
+    Finisher *f = new Finisher(g_ceph_context, oss.str());
+    ondisk_finishers.push_back(f);
+  }
+  for (int i = 0; i < apply_finisher_num; ++i) {
+    ostringstream oss;
+    oss << "filestore-apply-" << i;
+    Finisher *f = new Finisher(g_ceph_context, oss.str());
+    apply_finishers.push_back(f);
   }
 
   ostringstream oss;
@@ -630,6 +639,14 @@ FileStore::FileStore(const std::string &base, const std::string &jdev, osflagbit
 
 FileStore::~FileStore()
 {
+  for (vector<Finisher*>::iterator it = ondisk_finishers.begin(); it != ondisk_finishers.end(); ++it) {
+    delete *it;
+    *it = NULL;
+  }
+  for (vector<Finisher*>::iterator it = apply_finishers.begin(); it != apply_finishers.end(); ++it) {
+    delete *it;
+    *it = NULL;
+  }
   g_ceph_context->_conf->remove_observer(this);
   g_ceph_context->get_perfcounters_collection()->remove(logger);
 
@@ -1611,7 +1628,10 @@ int FileStore::mount()
   journal_start();
 
   op_tp.start();
-  for (vector<Finisher*>::iterator it = op_finishers.begin(); it != op_finishers.end(); ++it) {
+  for (vector<Finisher*>::iterator it = ondisk_finishers.begin(); it != ondisk_finishers.end(); ++it) {
+    (*it)->start();
+  }
+  for (vector<Finisher*>::iterator it = apply_finishers.begin(); it != apply_finishers.end(); ++it) {
     (*it)->start();
   }
 
@@ -1662,7 +1682,10 @@ int FileStore::umount()
   if (!(generic_flags & SKIP_JOURNAL_REPLAY))
     journal_write_close();
 
-  for (vector<Finisher*>::iterator it = op_finishers.begin(); it != op_finishers.end(); ++it) {
+  for (vector<Finisher*>::iterator it = ondisk_finishers.begin(); it != ondisk_finishers.end(); ++it) {
+    (*it)->stop();
+  }
+  for (vector<Finisher*>::iterator it = apply_finishers.begin(); it != apply_finishers.end(); ++it) {
     (*it)->stop();
   }
 
@@ -1843,10 +1866,10 @@ void FileStore::_finish_op(OpSequencer *osr)
     o->onreadable_sync->complete(0);
   }
   if (o->onreadable) {
-    op_finishers[osr->id % op_finisher_num]->queue(o->onreadable);
+    apply_finishers[osr->id % apply_finisher_num]->queue(o->onreadable);
   }
   if (!to_queue.empty()) {
-    op_finishers[osr->id % op_finisher_num]->queue(to_queue);
+    apply_finishers[osr->id % apply_finisher_num]->queue(to_queue);
   }
   delete o;
 }
@@ -1980,7 +2003,7 @@ int FileStore::queue_transactions(Sequencer *posr, list<Transaction*> &tls,
   if (onreadable_sync) {
     onreadable_sync->complete(r);
   }
-  op_finishers[osr->id % op_finisher_num]->queue(onreadable, r);
+  ondisk_finishers[osr->id % ondisk_finisher_num]->queue(onreadable, r);
 
   submit_manager.op_submit_finish(op);
   apply_manager.op_apply_finish(op);
@@ -2004,10 +2027,10 @@ void FileStore::_journaled_ahead(OpSequencer *osr, Op *o, Context *ondisk)
     dout(10) << " queueing ondisk " << ondisk << dendl;
     // In order to avoid the same finisher thread processing the same osr ondisk
     // and onapplied context. So we can improve single osr bandwidth
-    op_finishers[(osr->id + 1) % op_finisher_num]->queue(ondisk);
+    ondisk_finishers[(osr->id + 1) % ondisk_finisher_num]->queue(ondisk);
   }
   if (!to_queue.empty()) {
-    op_finishers[(osr->id + 1) % op_finisher_num]->queue(to_queue);
+    ondisk_finishers[(osr->id + 1) % ondisk_finisher_num]->queue(to_queue);
   }
 }
 
@@ -3713,7 +3736,10 @@ void FileStore::_flush_op_queue()
   dout(10) << "_flush_op_queue draining op tp" << dendl;
   op_wq.drain();
   dout(10) << "_flush_op_queue waiting for apply finisher" << dendl;
-  for (vector<Finisher*>::iterator it = op_finishers.begin(); it != op_finishers.end(); ++it) {
+  for (vector<Finisher*>::iterator it = ondisk_finishers.begin(); it != ondisk_finishers.end(); ++it) {
+    (*it)->wait_for_empty();
+  }
+  for (vector<Finisher*>::iterator it = apply_finishers.begin(); it != apply_finishers.end(); ++it) {
     (*it)->wait_for_empty();
   }
 }
@@ -3739,7 +3765,10 @@ void FileStore::flush()
     if (journal)
       journal->flush();
     dout(10) << "flush draining ondisk finisher" << dendl;
-    for (vector<Finisher*>::iterator it = op_finishers.begin(); it != op_finishers.end(); ++it) {
+    for (vector<Finisher*>::iterator it = ondisk_finishers.begin(); it != ondisk_finishers.end(); ++it) {
+      (*it)->wait_for_empty();
+    }
+    for (vector<Finisher*>::iterator it = apply_finishers.begin(); it != apply_finishers.end(); ++it) {
       (*it)->wait_for_empty();
     }
   }
