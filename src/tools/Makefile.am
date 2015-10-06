@@ -45,6 +45,10 @@ ceph_authtool_SOURCES = tools/ceph_authtool.cc
 ceph_authtool_LDADD = $(CEPH_GLOBAL) $(LIBCOMMON)
 bin_PROGRAMS += ceph-authtool
 
+ceph_sn_SOURCES = tools/ceph_sn.cc
+ceph_sn_LDADD = $(CEPH_GLOBAL)
+bin_PROGRAMS += ceph-sn
+
 noinst_HEADERS += \
 	tools/cephfs/JournalTool.h \
 	tools/cephfs/JournalScanner.h \

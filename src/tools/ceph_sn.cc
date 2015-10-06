@@ -1,10 +1,13 @@
 /*
- * This is the tool to generate ceph serial number
+ * This is the tool to parse ceph serial number
  * serial number format looks like uuid:
- * CC60BBA9-DBF2-F1A7-6AE7-E9523653515C
+ * 9191D01F-C26B-D4E2-CE76-B9700C35D2D2
  * command exmaples:
- *      ./ceph_sn encrypt 100 $((12*30*24*3600))  //generate serial number for 100 osds with interval 12 months
- *      ./ceph_sn decrypt CC60BBA9-DBF2-F1A7-6AE7-E9523653515C // decode SN
+ *      ./ceph_sn 9191D01F-C26B-D4E2-CE76-B9700C35D2D2
+ *      {
+ *	    "time": "9744043954",
+ *	    "osds": "100"
+ *	}
  */
 
 #include <iostream>
@@ -41,6 +44,9 @@ using CryptoPP::CBC_Mode;
 #include <sys/time.h>
 #include <sstream>
 #include <stdio.h>
+
+#include <boost/property_tree/ptree.hpp>
+#include <boost/property_tree/json_parser.hpp>
 
 //AutoSeededRandomPool prng;
 byte key[AES::DEFAULT_KEYLENGTH];
@@ -180,13 +186,13 @@ string gen_sn(struct sn_item *sn_item)
   return sn;
 }
 
-void parse_sn(string &sn, time_t &time, int &osds)
+int parse_sn(string &sn, time_t &time, int &osds)
 {
   time = 0;
   osds = 0;
   if (sn.length() != 36) {
     cout << "serial number length must be 36" << endl;
-    return;
+    return -1;
   }
   string plain;
   string cipher;
@@ -198,62 +204,44 @@ void parse_sn(string &sn, time_t &time, int &osds)
   for (i = 0; i < count - 1; i++) {
     pos += 1 + lens[i]; //with "-"
     if (sn.substr(pos - 1, 1) != "-")
-      return;
+      return -1;
     cipher += sn.substr(pos, lens[i+1]);
   }
   plain = decrypt(cipher);
   time = strtoul(plain.substr(0, 10).c_str(), NULL, 10);
   osds = atoi(plain.substr(10,5).c_str());
+  return 0;
 }
 
 void usage()
 {
-  cout << "usage: encrypt <osds> <seconds>" << endl
-        <<  "       decrypt <SN>"
-        << endl;
+  cout << "usage: <SN>" << endl;
 }
 
 int main(int argc, char *argv[])
 {
-  if (argc < 3) {
+  if (argc < 2) {
     usage();
     exit(-1);
   }
-  string type = argv[1];
-  string text = argv[2];
+  string text = argv[1];
   string plain_text, cipher_text;
   string str_key = "www.xsky.com";
   string str_iv = "www.xsky.com";
   init_kv(str_key, str_iv);
 
-  if (type == "encrypt") {
-    if ( argc < 4 ) {
-      usage();
-      exit(-1);
-    }
-
-    struct sn_item sn(atoi(argv[2]), strtoul(argv[3], NULL, 10));
-    const time_t unixtime_max = 9999999999; // 10 chars
-    const int max_osds = 99999; // 5 chars
-    if (sn.t > unixtime_max) {
-      cout << "time: "<< sn.t << " larger than unixtime_max: " << unixtime_max << endl;
-      exit(-1);
-    }
-    if (sn.osds > max_osds) {
-      cout << "osds: " << sn.osds << " larger than max_osds: " << max_osds << endl;
-      exit(-1);
-    }
-    string plain;
-    plain = sn.gen_sn_plain();
-    cipher_text = gen_sn(&sn);
-    cout << cipher_text << endl;
-  } else if(type == "decrypt") {
-    time_t t;
-    int osds;
-    parse_sn(text, t, osds);
-    cout << "time: " << t << endl
-         << "osds: " << osds << endl;
-  }
+  time_t t;
+  int osds;
+  int r;
+  r = parse_sn(text, t, osds);
+  if (r)
+    return r;
+  boost::property_tree::ptree pt;
+  std::stringstream ss;
+  pt.put("time", t);
+  pt.put("osds", osds);
+  boost::property_tree::write_json(ss, pt);
+  cout << ss.str();
 
   return 0;
 }
