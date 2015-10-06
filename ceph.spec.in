@@ -665,12 +665,12 @@ fi
 %{_bindir}/ceph-dencoder
 %{_bindir}/ceph-rbdnamer
 %{_bindir}/ceph-syn
-%{_bindir}/ceph-sn
 %{_bindir}/ceph-crush-location
 %{_bindir}/rados
 %{_bindir}/rbd
 %{_bindir}/ceph-post-file
 %{_bindir}/ceph-brag
+%{_bindir}/xsky-decrypt-tool
 %{_mandir}/man8/ceph-authtool.8*
 %{_mandir}/man8/ceph-conf.8*
 %{_mandir}/man8/ceph-dencoder.8*

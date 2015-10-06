@@ -45,11 +45,15 @@ ceph_authtool_SOURCES = tools/ceph_authtool.cc
 ceph_authtool_LDADD = $(CEPH_GLOBAL) $(LIBCOMMON)
 bin_PROGRAMS += ceph-authtool
 
-ceph_sn_SOURCES = tools/ceph_sn.cc
-ceph_sn_LDADD = $(CEPH_GLOBAL)
-bin_PROGRAMS += ceph-sn
+xsky_encrypt_tool_SOURCES = tools/xsky_encrypt_tool.cc
+xsky_encrypt_tool_LDADD = $(CEPH_GLOBAL)
+
+xsky_decrypt_tool_SOURCES = tools/xsky_decrypt_tool.cc
+xsky_decrypt_tool_LDADD = $(CEPH_GLOBAL)
+bin_PROGRAMS += xsky-decrypt-tool
 
 noinst_HEADERS += \
+	tools/aes_crypt.h \
 	tools/cephfs/JournalTool.h \
 	tools/cephfs/JournalScanner.h \
 	tools/cephfs/JournalFilter.h \
