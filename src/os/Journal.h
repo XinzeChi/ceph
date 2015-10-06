@@ -57,7 +57,7 @@ public:
   // writes
   virtual bool is_writeable() = 0;
   virtual int make_writeable() = 0;
-  virtual void submit_entry(uint64_t seq, bufferlist& e, int alignment,
+  virtual void submit_entry(uint64_t seq, bufferlist& e, uint32_t orig_len,
 			    Context *oncommit,
 			    TrackedOpRef osd_op = TrackedOpRef()) = 0;
   virtual void commit_start(uint64_t seq) = 0;
@@ -70,6 +70,9 @@ public:
     ) = 0; ///< @return true on successful read, false on journal end
 
   virtual bool should_commit_now() = 0;
+  
+  virtual __u32 get_head_align() { return 0; }
+  virtual bool need_entry_crc() { return true; }
 
   // reads/recovery
   
