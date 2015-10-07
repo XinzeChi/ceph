@@ -22,7 +22,7 @@ TEST(LocalConf, TestOSDLocalConf)
   int r = 0;
   int fd;
   {
-    fd = ::open("ceph.conf", O_WRONLY|O_CREAT, 0755);
+    fd = ::open("ceph.conf", O_WRONLY|O_CREAT|O_TRUNC, 0755);
     ASSERT_GT(fd, 0);
     for (vector<string>::const_iterator it = standard_conf.begin();
         it != standard_conf.end(); ++it) {
@@ -31,7 +31,7 @@ TEST(LocalConf, TestOSDLocalConf)
     }
   }
   {
-    fd = ::open("conf", O_WRONLY|O_CREAT, 0755);
+    fd = ::open("conf", O_WRONLY|O_CREAT|O_TRUNC, 0755);
     ASSERT_GT(fd, 0);
     for (vector<string>::const_iterator it = local_conf.begin();
         it != local_conf.end(); ++it) {
