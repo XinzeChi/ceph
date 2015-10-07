@@ -6,7 +6,7 @@
 #include "os/WBThrottle.h"
 #include "common/perf_counters.h"
 
-WBThrottle::WBThrottle(CephContext *cct) :
+WBThrottle::WBThrottle(CephContext *cct, string name) :
   cur_ios(0), cur_size(0),
   cct(cct),
   logger(NULL),
@@ -20,7 +20,7 @@ WBThrottle::WBThrottle(CephContext *cct) :
   }
   assert(cct);
   PerfCountersBuilder b(
-    cct, string("WBThrottle"),
+    cct, string("WBThrottle-" + name),
     l_wbthrottle_first, l_wbthrottle_last);
   b.add_u64(l_wbthrottle_bytes_dirtied, "bytes_dirtied");
   b.add_u64(l_wbthrottle_bytes_wb, "bytes_wb");

@@ -130,7 +130,7 @@ private:
 
   void set_from_conf();
 public:
-  WBThrottle(CephContext *cct);
+  WBThrottle(CephContext *cct, string name);
   ~WBThrottle();
 
   void start();

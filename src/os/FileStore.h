@@ -439,7 +439,7 @@ private:
   friend ostream& operator<<(ostream& out, const OpSequencer& s);
 
   FDCache fdcache;
-  WBThrottle wbthrottle;
+  vector<WBThrottle *> wbthrottles;
 
   Sequencer default_osr;
   int next_osr_id;
@@ -449,6 +449,7 @@ private:
   Mutex op_throttle_lock;
   const int ondisk_finisher_num;
   const int apply_finisher_num;
+  const int wbthrottle_num;
   vector<Finisher*> ondisk_finishers;
   vector<Finisher*> apply_finishers;
 
@@ -516,7 +517,7 @@ public:
   void lfn_close(FDRef fd);
   int lfn_link(coll_t c, coll_t newcid, const ghobject_t& o, const ghobject_t& newoid) ;
   int lfn_unlink(coll_t cid, const ghobject_t& o, const SequencerPosition &spos,
-		 bool force_clear_omap=false);
+		 bool force_clear_omap, int osr);
 
 public:
   FileStore(const std::string &base, const std::string &jdev,
@@ -650,8 +651,8 @@ public:
 
   int _touch(coll_t cid, const ghobject_t& oid);
   int _write(coll_t cid, const ghobject_t& oid, uint64_t offset, size_t len,
-	      const bufferlist& bl, uint32_t fadvise_flags = 0);
-  int _zero(coll_t cid, const ghobject_t& oid, uint64_t offset, size_t len);
+	      const bufferlist& bl, uint32_t fadvise_flags, int osr);
+  int _zero(coll_t cid, const ghobject_t& oid, uint64_t offset, size_t len, int osr);
   int _truncate(coll_t cid, const ghobject_t& oid, uint64_t size);
   int _clone(coll_t cid, const ghobject_t& oldoid, const ghobject_t& newoid,
 	     const SequencerPosition& spos);
@@ -661,7 +662,7 @@ public:
   int _do_clone_range(int from, int to, uint64_t srcoff, uint64_t len, uint64_t dstoff);
   int _do_sparse_copy_range(int from, int to, uint64_t srcoff, uint64_t len, uint64_t dstoff);
   int _do_copy_range(int from, int to, uint64_t srcoff, uint64_t len, uint64_t dstoff);
-  int _remove(coll_t cid, const ghobject_t& oid, const SequencerPosition &spos);
+  int _remove(coll_t cid, const ghobject_t& oid, const SequencerPosition &spos, int osr);
 
   int _fgetattr(int fd, const char *name, bufferptr& bp);
   int _fgetattrs(int fd, map<string,bufferptr>& aset);
@@ -714,7 +715,7 @@ public:
   int _collection_rmattr(coll_t c, const char *name);
   int _collection_setattrs(coll_t cid, map<string,bufferptr> &aset);
   int _collection_remove_recursive(const coll_t &cid,
-				   const SequencerPosition &spos);
+				   const SequencerPosition &spos, int osr);
 
   // collections
   int list_collections(vector<coll_t>& ls);
@@ -764,7 +765,7 @@ public:
 		      const SequencerPosition& spos);
   int _collection_move_rename(coll_t oldcid, const ghobject_t& oldoid,
 			      coll_t c, const ghobject_t& o,
-			      const SequencerPosition& spos);
+			      const SequencerPosition& spos, int osr);
 
   int _set_alloc_hint(coll_t cid, const ghobject_t& oid,
                       uint64_t expected_object_size,
