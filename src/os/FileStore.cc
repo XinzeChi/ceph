@@ -441,7 +441,7 @@ int FileStore::lfn_link(coll_t c, coll_t newcid, const ghobject_t& o, const ghob
 
 int FileStore::lfn_unlink(coll_t cid, const ghobject_t& o,
 			  const SequencerPosition &spos,
-			  bool force_clear_omap)
+			  bool force_clear_omap, int osr)
 {
   Index index;
   int r = get_index(cid, &index);
@@ -468,7 +468,7 @@ int FileStore::lfn_unlink(coll_t cid, const ghobject_t& o,
       if (r < 0) {
 	r = -errno;
 	if (r == -ENOENT) {
-	  wbthrottle.clear_object(o); // should be only non-cache ref
+	  wbthrottles[osr % wbthrottle_num]->clear_object(o); // should be only non-cache ref
 	  fdcache.clear(o);
 	} else {
 	  assert(!m_filestore_fail_eio || r != -EIO);
@@ -491,7 +491,7 @@ int FileStore::lfn_unlink(coll_t cid, const ghobject_t& o,
       if (g_conf->filestore_debug_inject_read_err) {
 	debug_obj_on_delete(o);
       }
-      wbthrottle.clear_object(o); // should be only non-cache ref
+      wbthrottles[osr % wbthrottle_num]->clear_object(o); // should be only non-cache ref
       fdcache.clear(o);
       if (o.is_pgmeta()) {
         pgmeta_cache.erase_pgmeta_key(o);
@@ -533,13 +533,13 @@ FileStore::FileStore(const std::string &base, const std::string &jdev, osflagbit
   timer(g_ceph_context, sync_entry_timeo_lock),
   stop(false), sync_thread(this),
   fdcache(g_ceph_context),
-  wbthrottle(g_ceph_context),
   default_osr("default"),
   next_osr_id(0),
   op_queue_len(0), op_queue_bytes(0),
   op_throttle_lock("FileStore::op_throttle_lock"),
   ondisk_finisher_num(g_conf->filestore_ondisk_finisher_threads),
   apply_finisher_num(g_conf->filestore_apply_finisher_threads),
+  wbthrottle_num(g_conf->filestore_wbthrottle_num),
   op_tp(g_ceph_context, "FileStore::op_tp", g_conf->filestore_op_threads, "filestore_op_threads"),
   op_wq(this, g_conf->filestore_op_thread_timeout,
 	g_conf->filestore_op_thread_suicide_timeout, &op_tp),
@@ -586,7 +586,11 @@ FileStore::FileStore(const std::string &base, const std::string &jdev, osflagbit
     Finisher *f = new Finisher(g_ceph_context, oss.str());
     apply_finishers.push_back(f);
   }
-
+  for (int i = 0; i < wbthrottle_num; ++i) {
+    ostringstream oss;
+    oss << i;
+    wbthrottles.push_back(new WBThrottle(g_ceph_context, oss.str()));
+  }
   ostringstream oss;
   oss << basedir << "/current";
   current_fn = oss.str();
@@ -644,6 +648,10 @@ FileStore::~FileStore()
     *it = NULL;
   }
   for (vector<Finisher*>::iterator it = apply_finishers.begin(); it != apply_finishers.end(); ++it) {
+    delete *it;
+    *it = NULL;
+  }
+  for (vector<WBThrottle*>::iterator it = wbthrottles.begin(); it != wbthrottles.end(); ++it) {
     delete *it;
     *it = NULL;
   }
@@ -751,11 +759,13 @@ void FileStore::create_backend(long f_type)
   switch (f_type) {
 #if defined(__linux__)
   case BTRFS_SUPER_MAGIC:
-    wbthrottle.set_fs(WBThrottle::BTRFS);
+    for (int i = 0; i < wbthrottle_num; ++i) {
+      wbthrottles[i]->set_fs(WBThrottle::BTRFS);
+    }
     break;
 
   case XFS_SUPER_MAGIC:
-    // wbthrottle is constructed with fs(WBThrottle::XFS)
+    // wbthrottles is constructed with fs(WBThrottle::XFS)
     break;
 #endif
   }
@@ -1591,7 +1601,9 @@ int FileStore::mount()
     }
   }
 
-  wbthrottle.start();
+  for (int i = 0; i < wbthrottle_num; ++i) {
+    wbthrottles[i]->start();
+  }
   sync_thread.create();
 
   if (!(generic_flags & SKIP_JOURNAL_REPLAY)) {
@@ -1610,7 +1622,9 @@ int FileStore::mount()
       lock.Unlock();
       sync_thread.join();
 
-      wbthrottle.stop();
+      for (int i = 0; i < wbthrottle_num; ++i) {
+        wbthrottles[i]->stop();
+      }
 
       goto close_current_fd;
     }
@@ -1675,7 +1689,9 @@ int FileStore::umount()
   sync_cond.Signal();
   lock.Unlock();
   sync_thread.join();
-  wbthrottle.stop();
+  for (int i = 0; i < wbthrottle_num; ++i) {
+    wbthrottles[i]->stop();
+  }
   op_tp.stop();
 
   journal_stop();
@@ -1825,8 +1841,8 @@ void FileStore::op_queue_release_throttle(Op *o)
 }
 
 void FileStore::_do_op(OpSequencer *osr, ThreadPool::TPHandle &handle)
-{
-  wbthrottle.throttle();
+{  
+  wbthrottles[osr->id % wbthrottle_num]->throttle();
   // inject a stall?
   if (g_conf->filestore_inject_stall) {
     int orig = g_conf->filestore_inject_stall;
@@ -2317,11 +2333,13 @@ unsigned FileStore::_do_transaction(
   Transaction& t, uint64_t op_seq, int trans_num,
   ThreadPool::TPHandle *handle)
 {
-  dout(10) << "_do_transaction on " << &t << dendl;
 
 #ifdef WITH_LTTNG
   const char *osr_name = t.get_osr() ? static_cast<OpSequencer*>(t.get_osr())->get_name().c_str() : "<NULL>";
 #endif
+  int osr = t.get_osr() ? static_cast<OpSequencer*>(t.get_osr())->id : 0;
+
+  dout(10) << "_do_transaction on " << &t << " osr " << osr << dendl;
 
   Transaction::iterator i = t.begin();
   
@@ -2360,7 +2378,7 @@ unsigned FileStore::_do_transaction(
         i.decode_bl(bl);
         tracepoint(objectstore, write_enter, osr_name, off, len);
         if (_check_replay_guard(cid, oid, spos) > 0)
-          r = _write(cid, oid, off, len, bl, fadvise_flags);
+          r = _write(cid, oid, off, len, bl, fadvise_flags, osr);
         tracepoint(objectstore, write_exit, r);
       }
       break;
@@ -2373,7 +2391,7 @@ unsigned FileStore::_do_transaction(
         uint64_t len = op->len;
         tracepoint(objectstore, zero_enter, osr_name, off, len);
         if (_check_replay_guard(cid, oid, spos) > 0)
-          r = _zero(cid, oid, off, len);
+          r = _zero(cid, oid, off, len, osr);
         tracepoint(objectstore, zero_exit, r);
       }
       break;
@@ -2402,7 +2420,7 @@ unsigned FileStore::_do_transaction(
         ghobject_t oid = i.get_oid(op->oid);
         tracepoint(objectstore, remove_enter, osr_name);
         if (_check_replay_guard(cid, oid, spos) > 0)
-          r = _remove(cid, oid, spos);
+          r = _remove(cid, oid, spos, osr);
         tracepoint(objectstore, remove_exit, r);
       }
       break;
@@ -2567,7 +2585,7 @@ unsigned FileStore::_do_transaction(
           break;
         tracepoint(objectstore, coll_remove_enter, osr_name);
         if (_check_replay_guard(ocid, oid, spos) > 0)
-          r = _remove(ocid, oid, spos);
+          r = _remove(ocid, oid, spos, osr);
         tracepoint(objectstore, coll_remove_exit, r);
       }
       break;
@@ -2582,7 +2600,7 @@ unsigned FileStore::_do_transaction(
         r = _collection_add(ocid, ncid, oid, spos);
         if (r == 0 &&
             (_check_replay_guard(ocid, oid, spos) > 0))
-          r = _remove(ocid, oid, spos);
+          r = _remove(ocid, oid, spos, osr);
         tracepoint(objectstore, coll_move_exit, r);
       }
       break;
@@ -2594,7 +2612,7 @@ unsigned FileStore::_do_transaction(
         coll_t newcid = i.get_cid(op->dest_cid);
         ghobject_t newoid = i.get_oid(op->dest_oid);
         tracepoint(objectstore, coll_move_rename_enter);
-        r = _collection_move_rename(oldcid, oldoid, newcid, newoid, spos);
+        r = _collection_move_rename(oldcid, oldoid, newcid, newoid, spos, osr);
         tracepoint(objectstore, coll_move_rename_exit, r);
       }
       break;
@@ -3020,10 +3038,10 @@ done:
 
 
 int FileStore::_remove(coll_t cid, const ghobject_t& oid,
-		       const SequencerPosition &spos) 
+		       const SequencerPosition &spos, int osr)
 {
   dout(15) << "remove " << cid << "/" << oid << dendl;
-  int r = lfn_unlink(cid, oid, spos);
+  int r = lfn_unlink(cid, oid, spos, false, osr);
   dout(10) << "remove " << cid << "/" << oid << " = " << r << dendl;
   return r;
 }
@@ -3054,7 +3072,8 @@ int FileStore::_touch(coll_t cid, const ghobject_t& oid)
 
 int FileStore::_write(coll_t cid, const ghobject_t& oid,
                      uint64_t offset, size_t len,
-                     const bufferlist& bl, uint32_t fadvise_flags)
+                     const bufferlist& bl, uint32_t fadvise_flags,
+                     int osr)
 {
   dout(15) << "write " << cid << "/" << oid << " " << offset << "~" << len << dendl;
   int r;
@@ -3098,7 +3117,7 @@ int FileStore::_write(coll_t cid, const ghobject_t& oid,
   // flush?
   if (!replaying &&
       g_conf->filestore_wbthrottle_enable)
-    wbthrottle.queue_wb(fd, oid, offset, len,
+    wbthrottles[osr % wbthrottle_num]->queue_wb(fd, oid, offset, len,
 			  fadvise_flags & CEPH_OSD_OP_FLAG_FADVISE_DONTNEED);
   lfn_close(fd);
 
@@ -3107,7 +3126,7 @@ int FileStore::_write(coll_t cid, const ghobject_t& oid,
   return r;
 }
 
-int FileStore::_zero(coll_t cid, const ghobject_t& oid, uint64_t offset, size_t len)
+int FileStore::_zero(coll_t cid, const ghobject_t& oid, uint64_t offset, size_t len, int osr)
 {
   dout(15) << "zero " << cid << "/" << oid << " " << offset << "~" << len << dendl;
   int ret = 0;
@@ -3147,7 +3166,7 @@ int FileStore::_zero(coll_t cid, const ghobject_t& oid, uint64_t offset, size_t 
     bp.zero();
     bufferlist bl;
     bl.push_back(bp);
-    ret = _write(cid, oid, offset, len, bl);
+    ret = _write(cid, oid, offset, len, bl, 0, osr);
   }
 
  out:
@@ -3643,7 +3662,9 @@ void FileStore::sync_entry()
       logger->tinc(l_os_commit_len, dur);
 
       apply_manager.commit_finish();
-      wbthrottle.clear();
+      for (int i = 0; i < wbthrottle_num; ++i) {
+        wbthrottles[i]->clear();
+      }
 
       logger->set(l_os_committing, 0);
 
@@ -4419,7 +4440,7 @@ int FileStore::_collection_setattrs(coll_t cid, map<string,bufferptr>& aset)
 }
 
 int FileStore::_collection_remove_recursive(const coll_t &cid,
-					    const SequencerPosition &spos)
+					    const SequencerPosition &spos, int osr)
 {
   struct stat st;
   int r = collection_stat(cid, &st);
@@ -4439,7 +4460,7 @@ int FileStore::_collection_remove_recursive(const coll_t &cid,
 	 i != objects.end();
 	 ++i) {
       assert(_check_replay_guard(cid, *i, spos));
-      r = _remove(cid, *i, spos);
+      r = _remove(cid, *i, spos, osr);
       if (r < 0)
 	return r;
     }
@@ -4970,7 +4991,7 @@ int FileStore::_collection_add(coll_t c, coll_t oldcid, const ghobject_t& o,
 
 int FileStore::_collection_move_rename(coll_t oldcid, const ghobject_t& oldoid,
 				       coll_t c, const ghobject_t& o,
-				       const SequencerPosition& spos)
+				       const SequencerPosition& spos, int osr)
 {
   dout(15) << __func__ << " " << c << "/" << o << " from " << oldcid << "/" << oldoid << dendl;
   int r = 0;
@@ -5036,7 +5057,7 @@ int FileStore::_collection_move_rename(coll_t oldcid, const ghobject_t& oldoid,
     fd = FDRef();
 
     if (r == 0)
-      r = lfn_unlink(oldcid, oldoid, spos, true);
+      r = lfn_unlink(oldcid, oldoid, spos, true, osr);
 
     if (r == 0)
       r = lfn_open(c, o, 0, &fd);
@@ -5055,7 +5076,7 @@ int FileStore::_collection_move_rename(coll_t oldcid, const ghobject_t& oldoid,
  out_rm_src:
   // remove source
   if (_check_replay_guard(oldcid, oldoid, spos) > 0) {
-    r = lfn_unlink(oldcid, oldoid, spos, true);
+    r = lfn_unlink(oldcid, oldoid, spos, true, osr);
   }
 
   dout(10) << __func__ << " " << c << "/" << o << " from " << oldcid << "/" << oldoid
