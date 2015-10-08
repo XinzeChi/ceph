@@ -23,6 +23,26 @@
 
 #include <map>
 #include <set>
+#include <stdio.h>
+#include <fstream>
+#include <cryptopp/modes.h>
+#include <iostream>
+
+#include <cryptopp/hex.h>
+using CryptoPP::HexEncoder;
+using CryptoPP::HexDecoder;
+
+#include <cryptopp/filters.h>
+using CryptoPP::StringSink;
+using CryptoPP::StringSource;
+using CryptoPP::StreamTransformationFilter;
+
+#include <cryptopp/aes.h>
+using CryptoPP::AES;
+
+#include <cryptopp/ccm.h>
+using CryptoPP::CBC_Mode;
+
 using namespace std;
 
 #include "include/types.h"
@@ -43,6 +63,9 @@ class Monitor;
 #include "erasure-code/ErasureCodeInterface.h"
 
 #define OSD_METADATA_PREFIX "osd_metadata"
+#define NO_SN_MAX_OSD 10
+#define DEFAULT_EXPIRE_INTERVAL (90*24*3600)
+#define SHUTDOWN_MON_DELAY 300.0
 
 /// information about a particular peer's failure reports for one osd
 struct failure_reporter_t {
@@ -154,9 +177,48 @@ private:
   CrushWrapper &_get_stable_crush();
   void _get_pending_crush(CrushWrapper& newcrush);
 
+  class AESCrypt {
+  private:
+    byte *key; //[ CryptoPP::AES::DEFAULT_KEYLENGTH ];
+    byte *iv; //[ CryptoPP::AES::BLOCKSIZE];
+  public:
+    const unsigned int sn_size;
+    AESCrypt(): sn_size(36)
+    {
+      key = new byte[CryptoPP::AES::DEFAULT_KEYLENGTH];
+      iv = new byte[CryptoPP::AES::BLOCKSIZE];
+      memset( key, 0x00, CryptoPP::AES::DEFAULT_KEYLENGTH );
+      memset( iv, 0x00, CryptoPP::AES::BLOCKSIZE );
+      string str = "www.xsky.com";
+      init_key_iv(str, str);
+    }
+
+    ~AESCrypt() {
+      if (key)
+        delete[] key;
+      if (iv)
+        delete[] iv;
+    }
+
+    void init_key_iv(string &str_key, string &str_iv) {
+      unsigned i = 0;
+      for (i = 0; i < AES::DEFAULT_KEYLENGTH && i < str_key.length(); i++)
+        key[i] = str_key[i];
+      for (i = 0; i < AES::BLOCKSIZE && i < str_iv.length(); i++)
+        iv[i] = str_iv[i];
+    }
+
+    string encrypt(string plain);
+    string decrypt(string cipher_hex);
+  } aes_crypt;
+
   // svc
 public:  
   void create_initial();
+  void parse_ceph_sn(string &sn, time_t &time, unsigned &osds);
+  int get_ceph_serial_number(bufferlist &bl);
+  bool check_ceph_serial_number();
+  void shutdown_monitor();
 private:
   void update_from_paxos(bool *need_bootstrap);
   void create_pending();  // prepare a new pending
@@ -382,7 +444,9 @@ private:
  public:
   OSDMonitor(Monitor *mn, Paxos *p, string service_name)
   : PaxosService(mn, p, service_name),
-    thrash_map(0), thrash_last_up_osd(-1) { }
+    thrash_map(0), thrash_last_up_osd(-1),
+    aes_crypt()
+  { }
 
   void tick();  // check state, take actions
 

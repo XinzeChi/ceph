@@ -41,7 +41,7 @@ vers=$(git describe --match "v*" | sed s/^v//)
 ./autogen.sh
 ./configure --with-rocksdb --with-ocf --with-rest-bench \
     --with-nss --with-debug --enable-cephfs-java \
-    --with-lttng --with-babeltrace
+    --with-lttng --with-babeltrace --with-cryptopp
 #
 # use distdir= to set the name of the top level directory of the
 # tarbal to match the desired version

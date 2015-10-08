@@ -36,6 +36,7 @@ Requires:	parted
 Requires:	util-linux
 Requires:	hdparm
 Requires:	cryptsetup
+Requires:	cryptopp
 Requires(post):	binutils
 BuildRequires:	gcc-c++
 BuildRequires:	boost-devel
@@ -43,6 +44,7 @@ BuildRequires:	boost-devel
 BuildRequires:  bzip2-devel
 %endif
 BuildRequires:	cryptsetup
+BuildRequires:	cryptopp-devel
 BuildRequires:	gdbm
 BuildRequires:	hdparm
 BuildRequires:	libaio-devel
@@ -454,7 +456,7 @@ export RPM_OPT_FLAGS=`echo $RPM_OPT_FLAGS | sed -e 's/i386/i486/'`
 		--sysconfdir=/etc \
 		--docdir=%{_docdir}/ceph \
 		--with-nss \
-		--without-cryptopp \
+		--with-cryptopp \
 		--with-rest-bench \
 		--with-debug \
 		--enable-cephfs-java \
@@ -668,6 +670,7 @@ fi
 %{_bindir}/rbd
 %{_bindir}/ceph-post-file
 %{_bindir}/ceph-brag
+%{_bindir}/xsky-decrypt-tool
 %{_mandir}/man8/ceph-authtool.8*
 %{_mandir}/man8/ceph-conf.8*
 %{_mandir}/man8/ceph-dencoder.8*
