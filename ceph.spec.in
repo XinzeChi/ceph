@@ -463,7 +463,7 @@ export RPM_OPT_FLAGS=`echo $RPM_OPT_FLAGS | sed -e 's/i386/i486/'`
 		--with-debug \
 		--enable-cephfs-java \
 		--with-jemalloc \
-		--with-librocksdb-static=check \
+		--with-librocksdb-static=no \
 		$MY_CONF_OPT \
 		%{?_with_ocf} \
 		CFLAGS="$RPM_OPT_FLAGS" CXXFLAGS="$RPM_OPT_FLAGS"
