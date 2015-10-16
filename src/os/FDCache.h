@@ -66,6 +66,7 @@ public:
     if (cct->_conf->filestore_fd_cache_random) {
       random_cache.set_size(cct->_conf->filestore_fd_cache_size);
       random = true;
+      registry = NULL;
     } else {
       registry = new SharedLRU<ghobject_t, FD>[registry_shards];
       for (int i = 0; i < registry_shards; ++i) {
@@ -77,7 +78,8 @@ public:
   }
   ~FDCache() {
     cct->_conf->remove_observer(this);
-    delete[] registry;
+    if (registry)
+      delete[] registry;
   }
 
   FDRef lookup(const ghobject_t &hoid) {
