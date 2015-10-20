@@ -4091,6 +4091,10 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
           result = -EOPNOTSUPP;
           break;
         }
+        if (obs.exists && !obs.oi.is_whiteout()) {
+          result = 0;
+          break;
+        }
 	if (maybe_create_new_object(ctx)) {
           ctx->mod_desc.create();
           t->touch(soid);
