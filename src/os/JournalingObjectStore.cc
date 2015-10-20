@@ -313,6 +313,12 @@ uint32_t JournalingObjectStore::_op_journal_transactions_prepare(
   }
   bl.append((const char*)&h, sizeof(h));
   bl.rebuild_page_aligned();
+  if (bl.buffers().size() != 1) {
+    bufferptr ptr = buffer::create_page_aligned(bl.length());
+    ptr.copy_in(0, bl.length(), bl.c_str());
+    bl.clear();
+    bl.push_back(ptr);
+  }
   bl.swap(tbl);
   return h.len;
 }
