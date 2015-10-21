@@ -891,9 +891,13 @@ int FileJournal::prepare_single_write(write_item &next_write, bufferlist& bl, of
 {
   uint64_t seq = next_write.seq;
   bufferlist &ebl = next_write.bl;
-  assert(ebl.is_page_aligned());
-  assert(ebl.is_n_page_sized());
-  assert(ebl.buffers().size() == 1);
+  if (ebl.buffers().size() != 1) {
+    dout(0) << " bl should be continus memory, fix me" << dendl;
+    bufferptr ptr = buffer::create_page_aligned(ebl.length());
+    ptr.copy_in(0, ebl.length(), ebl.c_str());
+    ebl.clear();
+    ebl.push_back(ptr);
+  }
   off64_t size = ebl.length();
 
   int r = check_for_full(seq, queue_pos, size);
@@ -945,7 +949,7 @@ void FileJournal::align_bl(off64_t pos, bufferlist& bl)
   // make sure list segments are page aligned
   if (directio && (!bl.is_page_aligned() ||
 		   !bl.is_n_page_sized())) {
-    assert(0 == "bl should be align");
+    dout(0) << "bl should be align" << dendl;
     bl.rebuild_page_aligned();
     dout(10) << __func__ << " total memcopy: " << bl.get_memcopy_count() << dendl;
     if ((bl.length() & ~CEPH_PAGE_MASK) != 0 ||
