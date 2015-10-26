@@ -108,7 +108,6 @@ protected:
   } apply_manager;
 
   bool replaying;
-  char *zero_buf;
 
 protected:
   void journal_start();
@@ -116,8 +115,6 @@ protected:
   void journal_write_close();
   int journal_replay(uint64_t fs_op_seq);
 
-  uint32_t _op_journal_transactions_prepare(
-    list<ObjectStore::Transaction*>& tls, bufferlist& tbl);
   void _op_journal_transactions(bufferlist& tls, uint32_t orig_len, uint64_t op,
 				Context *onjournal, TrackedOpRef osd_op);
 
@@ -137,11 +134,9 @@ public:
       journal(NULL),
       finisher(g_ceph_context),
       apply_manager(journal, finisher),
-      replaying(false),
-      zero_buf(NULL) {}
+      replaying(false) {}
 
   ~JournalingObjectStore() {
-    delete[] zero_buf;
   }
 };
 

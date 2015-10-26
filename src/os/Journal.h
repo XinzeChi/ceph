@@ -22,6 +22,7 @@
 #include "include/Context.h"
 #include "common/Finisher.h"
 #include "common/TrackedOp.h"
+#include "os/ObjectStore.h"
 
 class PerfCounters;
 
@@ -73,6 +74,8 @@ public:
   
   virtual __u32 get_head_align() { return 0; }
   virtual bool need_entry_crc() { return true; }
+
+  virtual int _op_journal_transactions_prepare(list<ObjectStore::Transaction*>& tls, bufferlist& tbl) = 0;
 
   // reads/recovery
   
