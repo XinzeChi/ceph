@@ -62,7 +62,7 @@ public:
   ConfFile();
   ~ConfFile();
   void clear();
-  int parse_file(const std::string &fname, std::deque<std::string> *errors, std::ostream *warnings);
+  int parse_file(const std::string &fname, std::deque<std::string> *errors, std::ostream *warnings, bool local_conf = false);
   int parse_bufferlist(ceph::bufferlist *bl, std::deque<std::string> *errors, std::ostream *warnings);
   int read(const std::string &section, const std::string &key,
 	      std::string &val) const;
@@ -76,7 +76,7 @@ public:
 
 private:
   void load_from_buffer(const char *buf, size_t sz,
-			std::deque<std::string> *errors, std::ostream *warnings);
+			std::deque<std::string> *errors, std::ostream *warnings, bool local_conf = false);
   static ConfLine* process_line(int line_no, const char *line,
 			        std::deque<std::string> *errors);
 
