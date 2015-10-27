@@ -132,7 +132,7 @@ void global_pre_init(std::vector < const char * > *alt_def_args,
 
   string local_conf = apply_daemon_local_conf(conf, module_type);
   if (local_conf.size()) {
-    ret = conf->parse_config_files(c_str_or_null(local_conf), &parse_errors, &cerr, flags);
+    ret = conf->parse_config_files(c_str_or_null(local_conf), &parse_errors, &cerr, flags, true);
     if(ret < 0) {
       dout_emergency("global_init: error reading local config file.\n");
       _exit(1);

@@ -91,10 +91,11 @@ clear()
  */
 int ConfFile::
 parse_file(const std::string &fname, std::deque<std::string> *errors,
-	   std::ostream *warnings)
+	   std::ostream *warnings, bool local_conf)
 {
-  clear();
-
+  if (!local_conf) {
+    clear();
+  }
   int ret = 0;
   size_t sz;
   char *buf = NULL;
@@ -148,7 +149,7 @@ parse_file(const std::string &fname, std::deque<std::string> *errors,
     }
   }
 
-  load_from_buffer(buf, sz, errors, warnings);
+  load_from_buffer(buf, sz, errors, warnings, local_conf);
   ret = 0;
 
 done:
@@ -280,14 +281,18 @@ std::ostream &operator<<(std::ostream &oss, const ConfFile &cf)
 
 void ConfFile::
 load_from_buffer(const char *buf, size_t sz, std::deque<std::string> *errors,
-		 std::ostream *warnings)
+		 std::ostream *warnings, bool local_conf)
 {
   errors->clear();
 
-  section_iter_t::value_type vt("global", ConfSection());
-  pair < section_iter_t, bool > vr(sections.insert(vt));
-  assert(vr.second);
-  section_iter_t cur_section = vr.first;
+  pair < section_iter_t, bool > vr;
+  section_iter_t cur_section = sections.find("global");
+  if (!local_conf || cur_section == sections.end()) {
+    section_iter_t::value_type vt("global", ConfSection());
+    vr = sections.insert(vt);
+    assert(vr.second);
+    cur_section = vr.first;
+  }
   std::string acc;
 
   const char *b = buf;
@@ -356,9 +361,12 @@ load_from_buffer(const char *buf, size_t sz, std::deque<std::string> *errors,
       continue;
     const std::string &csection(cline->newsection);
     if (!csection.empty()) {
-      std::map <std::string, ConfSection>::value_type nt(csection, ConfSection());
-      pair < section_iter_t, bool > nr(sections.insert(nt));
-      cur_section = nr.first;
+      cur_section = sections.find(csection);
+      if (!local_conf || cur_section == sections.end()) {
+        std::map <std::string, ConfSection>::value_type nt(csection, ConfSection());
+        pair < section_iter_t, bool > nr(sections.insert(nt));
+        cur_section = nr.first;
+      }
     }
     else {
       if (cur_section->second.lines.count(*cline)) {

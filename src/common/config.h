@@ -107,7 +107,7 @@ public:
   // Parse a config file
   int parse_config_files(const char *conf_files,
 			 std::deque<std::string> *parse_errors,
-			 std::ostream *warnings, int flags);
+			 std::ostream *warnings, int flags, bool local_conf = false);
 
   // Absorb config settings from the environment
   void parse_env();
@@ -175,7 +175,7 @@ private:
 		      std::ostream *oss);
   int parse_config_files_impl(const std::list<std::string> &conf_files,
 			      std::deque<std::string> *parse_errors,
-			      std::ostream *warnings);
+			      std::ostream *warnings, bool local_conf = false);
 
   int set_val_impl(const char *val, const config_option *opt);
   int set_val_raw(const char *val, const config_option *opt);

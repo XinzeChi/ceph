@@ -199,7 +199,8 @@ void md_config_t::remove_observer(md_config_obs_t* observer_)
 int md_config_t::parse_config_files(const char *conf_files,
 				    std::deque<std::string> *parse_errors,
 				    std::ostream *warnings,
-				    int flags)
+				    int flags,
+                                    bool local_conf)
 {
   Mutex::Locker l(lock);
   if (internal_safe_to_start_threads)
@@ -217,22 +218,25 @@ int md_config_t::parse_config_files(const char *conf_files,
   }
   std::list<std::string> cfl;
   get_str_list(conf_files, cfl);
-  return parse_config_files_impl(cfl, parse_errors, warnings);
+  return parse_config_files_impl(cfl, parse_errors, warnings, local_conf);
 }
 
 int md_config_t::parse_config_files_impl(const std::list<std::string> &conf_files,
 					 std::deque<std::string> *parse_errors,
-					 std::ostream *warnings)
+					 std::ostream *warnings,
+                                         bool local_conf)
 {
   assert(lock.is_locked());
 
   // open new conf
   list<string>::const_iterator c;
   for (c = conf_files.begin(); c != conf_files.end(); ++c) {
-    cf.clear();
+    if (!local_conf) {
+      cf.clear();
+    }
     string fn = *c;
     expand_meta(fn, warnings);
-    int ret = cf.parse_file(fn.c_str(), parse_errors, warnings);
+    int ret = cf.parse_file(fn.c_str(), parse_errors, warnings, local_conf);
     if (ret == 0)
       break;
     else if (ret != -ENOENT)
