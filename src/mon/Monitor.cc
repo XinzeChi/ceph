@@ -4031,6 +4031,18 @@ void Monitor::handle_subscribe(MMonSubscribe *m)
     if ((p->second.flags & CEPH_SUBSCRIBE_ONETIME) == 0)
       reply = true;
 
+    // remove conflicting subscribes
+    if (logmon()->sub_name_to_id(p->first) >= 0) {
+      for (map<string, Subscription*>::iterator it = s->sub_map.begin();
+	   it != s->sub_map.end(); ) {
+	if (it->first != p->first && logmon()->sub_name_to_id(it->first) >= 0) {
+	  session_map.remove_sub(s->sub_map[(it++)->first]);
+	} else {
+	  ++it;
+	}
+      }
+    }
+
     session_map.add_update_sub(s, p->first, p->second.start, 
 			       p->second.flags & CEPH_SUBSCRIBE_ONETIME,
 			       m->get_connection()->has_feature(CEPH_FEATURE_INCSUBOSDMAP));
