@@ -392,6 +392,11 @@ int FileJournal::create()
 
   print_header();
 
+  // static zeroed buffer for alignment padding
+  delete [] zero_buf;
+  zero_buf = new char[header.alignment];
+  memset(zero_buf, 0, header.alignment);
+
   bp = prepare_header();
   if (TEMP_FAILURE_RETRY(::pwrite(fd, bp.c_str(), bp.length(), 0)) < 0) {
     ret = errno;
@@ -472,6 +477,11 @@ int FileJournal::open(uint64_t fs_op_seq)
   err = read_header();
   if (err < 0)
     return err;
+
+  // static zeroed buffer for alignment padding
+  delete [] zero_buf;
+  zero_buf = new char[header.alignment];
+  memset(zero_buf, 0, header.alignment);
 
   dout(10) << "open header.fsid = " << header.fsid 
     //<< " vs expected fsid = " << fsid 
@@ -1486,6 +1496,61 @@ void FileJournal::check_aio_completion()
   }
 }
 #endif
+
+int FileJournal::_op_journal_transactions_prepare(list<ObjectStore::Transaction*>& tls, bufferlist& tbl) {
+  dout(10) << "_op_journal_transactions_prepare " << tls << dendl;
+  unsigned data_len = 0;
+  int data_align = -1; // -1 indicates that we don't care about the alignment
+  for (list<ObjectStore::Transaction*>::iterator p = tls.begin();
+      p != tls.end(); ++p) {
+    ObjectStore::Transaction *t = *p;
+    if (t->get_data_length() > data_len &&
+     (int)t->get_data_length() >= g_conf->journal_align_min_size) {
+     data_len = t->get_data_length();
+     data_align = (t->get_data_alignment() - tbl.length()) & ~CEPH_PAGE_MASK;
+    }
+    ::encode(*t, tbl);
+  }
+  // add it this entry
+  entry_header_t h;
+  unsigned head_size = sizeof(entry_header_t);
+  off64_t base_size = 2*head_size + tbl.length();
+  off64_t size = ROUND_UP_TO(base_size, get_head_align());
+  unsigned post_pad = size - base_size;
+  memset(&h, 0, sizeof(h));
+  h.pre_pad = 0;
+  h.len = tbl.length();
+  h.post_pad = post_pad;
+  if (need_entry_crc()) {
+    h.crc32c = tbl.crc32c(0);
+  } else {
+    h.crc32c = 0;
+  }
+  dout(10) << " len " << tbl.length() << " -> " << size
+       << " (head " << head_size << " pre_pad " << h.pre_pad
+       << " ebl " << tbl.length() << " post_pad " << post_pad << " tail " << head_size << ")"
+       << " (ebl alignment " << data_align << ")"
+       << dendl;
+  bufferptr ptr = buffer::create_page_aligned(size);
+  uint32_t off = 0;
+  ptr.copy_in(0, sizeof(h), (const char*)&h);
+  off += sizeof(h);
+  for (list<bufferptr>::const_iterator it = tbl.buffers().begin();
+       it != tbl.buffers().end();
+       ++it) {
+    ptr.copy_in(off, it->length(), it->c_str());
+    off += it->length();
+  }
+
+  if (h.post_pad) {
+    ptr.copy_in(off, post_pad, zero_buf);
+    off += post_pad;
+  }
+  ptr.copy_in(off, sizeof(h), (const char*)&h);
+  tbl.clear();
+  tbl.push_back(ptr);
+  return h.len;
+}
 
 void FileJournal::submit_entry(uint64_t seq, bufferlist& e, uint32_t orig_len,
 			       Context *oncommit, TrackedOpRef osd_op)

@@ -29,24 +29,6 @@ using std::deque;
 # include <libaio.h>
 #endif
 
-struct entry_header_t {
-  uint64_t seq;     // fs op seq #
-  uint32_t crc32c;  // payload only.  not header, pre_pad, post_pad, or footer.
-  uint32_t len;
-  uint32_t pre_pad, post_pad;
-  uint64_t magic1;
-  uint64_t magic2;
-  
-  static uint64_t make_magic(uint64_t seq, uint32_t len, uint64_t fsid) {
-    return (fsid ^ seq ^ len);
-  }
-  bool check_magic(off64_t pos, uint64_t fsid) {
-    return
-  magic1 == (uint64_t)pos &&
-  magic2 == (fsid ^ seq ^ len);
-  }
-} __attribute__((__packed__, aligned(4)));
-
 /**
  * Implements journaling on top of block device or file.
  *
@@ -107,6 +89,8 @@ public:
     assert(!completions.empty());
     completions.pop_front();
   }
+
+  int _op_journal_transactions_prepare(list<ObjectStore::Transaction*>& tls, bufferlist& tbl);
 
   void submit_entry(uint64_t seq, bufferlist& bl, uint32_t orig_len,
 		    Context *oncommit,
@@ -215,9 +199,28 @@ public:
     }
   } header;
 
+  struct entry_header_t {
+    uint64_t seq;     // fs op seq #
+    uint32_t crc32c;  // payload only.  not header, pre_pad, post_pad, or footer.
+    uint32_t len;
+    uint32_t pre_pad, post_pad;
+    uint64_t magic1;
+    uint64_t magic2;
+    
+    static uint64_t make_magic(uint64_t seq, uint32_t len, uint64_t fsid) {
+      return (fsid ^ seq ^ len);
+    }
+    bool check_magic(off64_t pos, uint64_t fsid) {
+      return
+    magic1 == (uint64_t)pos &&
+    magic2 == (fsid ^ seq ^ len);
+    }
+  } __attribute__((__packed__, aligned(4)));
+
 private:
   string fn;
 
+  char *zero_buf;
   off64_t max_size;
   size_t block_size;
   bool directio, aio, force_aio;
@@ -363,6 +366,7 @@ private:
     completions_lock(
       "FileJournal::completions_lock", false, true, false, g_ceph_context),
     fn(f),
+    zero_buf(NULL),
     max_size(0), block_size(0),
     directio(dio), aio(ai), force_aio(faio),
     must_write_header(false),
@@ -386,6 +390,7 @@ private:
     write_thread(this),
     write_finish_thread(this) { }
   ~FileJournal() {
+    delete[] zero_buf;
   }
 
   int check();

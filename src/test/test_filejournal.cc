@@ -12,6 +12,7 @@
 #include "include/Context.h"
 #include "common/Mutex.h"
 #include "common/safe_io.h"
+#include "os/JournalingObjectStore.h"
 
 Finisher *finisher;
 Cond sync_cond;
@@ -69,6 +70,7 @@ int main(int argc, char **argv) {
   char mb[10];
   sprintf(mb, "%u", size_mb);
   g_ceph_context->_conf->set_val("osd_journal_size", mb);
+  g_ceph_context->_conf->set_val("filestore_journal_crc", "true");
   g_ceph_context->_conf->apply_changes(NULL);
 
   finisher = new Finisher(g_ceph_context);
@@ -130,9 +132,11 @@ TEST(TestFileJournal, WriteSmall) {
   ASSERT_EQ(0, j.create());
   j.make_writeable();
 
+  list<ObjectStore::Transaction*> tls;
   bufferlist bl;
   bl.append("small");
-  j.submit_entry(1, bl, 0, new C_SafeCond(&wait_lock, &cond, &done));
+  int orig_len = j._op_journal_transactions_prepare(tls, bl);
+  j.submit_entry(1, bl, orig_len, new C_SafeCond(&wait_lock, &cond, &done));
   wait();
 
   j.close();
@@ -150,7 +154,9 @@ TEST(TestFileJournal, WriteBig) {
     memset(foo, 1, sizeof(foo));
     bl.append(foo, sizeof(foo));
   }
-  j.submit_entry(1, bl, 0, new C_SafeCond(&wait_lock, &cond, &done));
+  list<ObjectStore::Transaction*> tls;
+  int orig_len = j._op_journal_transactions_prepare(tls, bl);
+  j.submit_entry(1, bl, orig_len, new C_SafeCond(&wait_lock, &cond, &done));
   wait();
 
   j.close();
@@ -167,9 +173,11 @@ TEST(TestFileJournal, WriteMany) {
   bufferlist bl;
   bl.append("small");
   uint64_t seq = 1;
+  list<ObjectStore::Transaction*> tls;
   for (int i=0; i<100; i++) {
     bl.append("small");
-    j.submit_entry(seq++, bl, 0, gb.new_sub());
+    int orig_len = j._op_journal_transactions_prepare(tls, bl);
+    j.submit_entry(seq++, bl, orig_len, gb.new_sub());
   }
 
   gb.activate();
@@ -189,7 +197,9 @@ TEST(TestFileJournal, WriteManyVecs) {
 
   bufferlist first;
   first.append("small");
-  j.submit_entry(1, first, 0, gb.new_sub());
+  list<ObjectStore::Transaction*> tls;
+  int orig_len = j._op_journal_transactions_prepare(tls, first);
+  j.submit_entry(1, first, orig_len, gb.new_sub());
 
   bufferlist bl;
   for (int i=0; i<IOV_MAX * 2; i++) {
@@ -198,7 +208,8 @@ TEST(TestFileJournal, WriteManyVecs) {
     bl.append(bp);
   }
   bufferlist origbl = bl;
-  j.submit_entry(2, bl, 0, gb.new_sub());
+  orig_len = j._op_journal_transactions_prepare(tls, bl);
+  j.submit_entry(2, bl, orig_len, gb.new_sub());
   gb.activate();
   wait();
 
@@ -226,11 +237,15 @@ TEST(TestFileJournal, ReplaySmall) {
   
   bufferlist bl;
   bl.append("small");
-  j.submit_entry(1, bl, 0, gb.new_sub());
+  list<ObjectStore::Transaction*> tls;
+  int orig_len = j._op_journal_transactions_prepare(tls, bl);
+  j.submit_entry(1, bl, orig_len, gb.new_sub());
   bl.append("small");
-  j.submit_entry(2, bl, 0, gb.new_sub());
+  orig_len = j._op_journal_transactions_prepare(tls, bl);
+  j.submit_entry(2, bl, orig_len, gb.new_sub());
   bl.append("small");
-  j.submit_entry(3, bl, 0, gb.new_sub());
+  orig_len = j._op_journal_transactions_prepare(tls, bl);
+  j.submit_entry(3, bl, orig_len, gb.new_sub());
   gb.activate();
   wait();
 
@@ -273,13 +288,22 @@ TEST(TestFileJournal, ReplayCorrupt) {
   const char *newneedle = "in a haystack";
   bufferlist bl;
   bl.append(needle);
-  j.submit_entry(1, bl, 0, gb.new_sub());
+  list<ObjectStore::Transaction*> tls;
+  int orig_len = j._op_journal_transactions_prepare(tls, bl);
+  j.submit_entry(1, bl, orig_len, gb.new_sub());
+
   bl.append(needle);
-  j.submit_entry(2, bl, 0, gb.new_sub());
+  orig_len = j._op_journal_transactions_prepare(tls, bl);
+  j.submit_entry(2, bl, orig_len, gb.new_sub());
+
   bl.append(needle);
-  j.submit_entry(3, bl, 0, gb.new_sub());
+  orig_len = j._op_journal_transactions_prepare(tls, bl);
+  j.submit_entry(3, bl, orig_len, gb.new_sub());
+
   bl.append(needle);
-  j.submit_entry(4, bl, 0, gb.new_sub());
+  orig_len = j._op_journal_transactions_prepare(tls, bl);
+  j.submit_entry(4, bl, orig_len, gb.new_sub());
+
   gb.activate();
   wait();
 
@@ -341,13 +365,14 @@ TEST(TestFileJournal, WriteTrim) {
   memset(foo, 1, sizeof(foo));
 
   uint64_t seq = 1, committed = 0;
-
+  list<ObjectStore::Transaction*> tls;
   for (unsigned i=0; i<size_mb*2; i++) {
     bl.clear();
     bl.push_back(buffer::copy(foo, sizeof(foo)));
     bl.zero();
     ls.push_back(new C_Sync);
-    j.submit_entry(seq++, bl, 0, ls.back()->c);
+    int orig_len = j._op_journal_transactions_prepare(tls, bl);
+    j.submit_entry(seq++, bl, orig_len, ls.back()->c);
 
     while (ls.size() > size_mb/2) {
       delete ls.front();
@@ -380,13 +405,15 @@ TEST(TestFileJournal, WriteTrimSmall) {
 
   uint64_t seq = 1, committed = 0;
 
+  list<ObjectStore::Transaction*> tls;
   for (unsigned i=0; i<size_mb*2; i++) {
     bl.clear();
     for (int k=0; k<128; k++)
       bl.push_back(buffer::copy(foo, sizeof(foo) / 128));
     bl.zero();
     ls.push_back(new C_Sync);
-    j.submit_entry(seq++, bl, 0, ls.back()->c);
+    int orig_len = j._op_journal_transactions_prepare(tls, bl);
+    j.submit_entry(seq++, bl, orig_len, ls.back()->c);
 
     while (ls.size() > size_mb/2) {
       delete ls.front();
@@ -412,6 +439,7 @@ TEST(TestFileJournal, ReplayDetectCorruptFooterMagic) {
 
   fsid.generate_random();
   FileJournal j(fsid, finisher, &sync_cond, path, directio, aio);
+  list<ObjectStore::Transaction*> tls;
   ASSERT_EQ(0, j.create());
   j.make_writeable();
 
@@ -421,14 +449,16 @@ TEST(TestFileJournal, ReplayDetectCorruptFooterMagic) {
   for (unsigned i = 1; i <= 4; ++i) {
     bufferlist bl;
     bl.append(needle);
-    j.submit_entry(i, bl, 0, gb.new_sub());
+    int orig_len = j._op_journal_transactions_prepare(tls, bl);
+    j.submit_entry(i, bl, orig_len, gb.new_sub());
   }
   gb.activate();
   wait();
 
   bufferlist bl;
   bl.append("needle");
-  j.submit_entry(5, bl, 0, new C_SafeCond(&wait_lock, &cond, &done));
+  int orig_len = j._op_journal_transactions_prepare(tls, bl);
+  j.submit_entry(5, bl, orig_len, new C_SafeCond(&wait_lock, &cond, &done));
   wait();
 
   j.close();
@@ -468,17 +498,20 @@ TEST(TestFileJournal, ReplayDetectCorruptPayload) {
   C_GatherBuilder gb(g_ceph_context, new C_SafeCond(&wait_lock, &cond, &done));
 
   const char *needle =    "i am a needle";
+  list<ObjectStore::Transaction*> tls;
   for (unsigned i = 1; i <= 4; ++i) {
     bufferlist bl;
     bl.append(needle);
-    j.submit_entry(i, bl, 0, gb.new_sub());
+    int orig_len = j._op_journal_transactions_prepare(tls, bl);
+    j.submit_entry(i, bl, orig_len, gb.new_sub());
   }
   gb.activate();
   wait();
 
   bufferlist bl;
   bl.append("needle");
-  j.submit_entry(5, bl, 0, new C_SafeCond(&wait_lock, &cond, &done));
+  int orig_len = j._op_journal_transactions_prepare(tls, bl);
+  j.submit_entry(5, bl, orig_len, new C_SafeCond(&wait_lock, &cond, &done));
   wait();
 
   j.close();
@@ -518,17 +551,21 @@ TEST(TestFileJournal, ReplayDetectCorruptHeader) {
   C_GatherBuilder gb(g_ceph_context, new C_SafeCond(&wait_lock, &cond, &done));
 
   const char *needle =    "i am a needle";
+
+  list<ObjectStore::Transaction*> tls;
   for (unsigned i = 1; i <= 4; ++i) {
     bufferlist bl;
     bl.append(needle);
-    j.submit_entry(i, bl, 0, gb.new_sub());
+    int orig_len = j._op_journal_transactions_prepare(tls, bl);
+    j.submit_entry(i, bl, orig_len, gb.new_sub());
   }
   gb.activate();
   wait();
 
   bufferlist bl;
   bl.append("needle");
-  j.submit_entry(5, bl, 0, new C_SafeCond(&wait_lock, &cond, &done));
+  int orig_len = j._op_journal_transactions_prepare(tls, bl);
+  j.submit_entry(5, bl, orig_len, new C_SafeCond(&wait_lock, &cond, &done));
   wait();
 
   j.close();
