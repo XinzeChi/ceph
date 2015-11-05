@@ -83,7 +83,7 @@ class BlockThrottle {
 
   /* usage */
   bool schedule_timer(bool is_write, bool release_timer_wait=false);
-  void account(bool is_write, uint64_t size);
+  void account(bool is_write, uint64_t size, bool lock_hold=false);
 };
 
 #endif

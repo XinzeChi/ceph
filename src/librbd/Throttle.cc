@@ -23,7 +23,7 @@
 
 BlockThrottle::BlockThrottle(CephContext *c, uint64_t op_size)
   : cct(c), op_size(op_size), lock("librbd::Throttle::BlockThrottle::lock"),
-    timer(c, lock, false), enable(false) {
+    timer(c, lock, true), enable(false) {
     timer_cb[0] = timer_cb[1] = NULL;
     timer_wait[0] = timer_wait[1] = false;
     timer.init();
@@ -129,9 +129,10 @@ bool BlockThrottle::config(BucketType type, double avg, double max)
  */
 bool BlockThrottle::schedule_timer(bool is_write, bool release_timer_wait)
 {
-  Mutex::Locker l(lock);
   if (release_timer_wait)
     timer_wait[is_write] = false;
+  else
+    lock.Lock();
 
   /* leak proportionally to the time elapsed */
   throttle_do_leak();
@@ -140,8 +141,11 @@ bool BlockThrottle::schedule_timer(bool is_write, bool release_timer_wait)
   double wait = throttle_compute_wait_for(is_write);
 
   /* if the code must wait compute when the next timer should fire */
-  if (!wait)
+  if (!wait) {
+    if (!release_timer_wait)
+      lock.Unlock();
     return false;
+  }
 
   /* request throttled and timer not pending -> arm timer */
   if (!timer_wait[is_write]) {
@@ -149,6 +153,8 @@ bool BlockThrottle::schedule_timer(bool is_write, bool release_timer_wait)
     timer.add_event_after(wait, timer_cb[is_write]);
     timer_wait[is_write] = true;
   }
+  if (!release_timer_wait)
+    lock.Unlock();
   return true;
 }
 
@@ -157,9 +163,10 @@ bool BlockThrottle::schedule_timer(bool is_write, bool release_timer_wait)
  * @is_write: the type of operation (read/write)
  * @size:     the size of the operation
  */
-void BlockThrottle::account(bool is_write, uint64_t size)
+void BlockThrottle::account(bool is_write, uint64_t size, bool lock_hold)
 {
-  Mutex::Locker l(lock);
+  if (!lock_hold)
+    lock.Lock();
   double units = 1.0;
 
   /* if op_size is defined and smaller than size we compute unit count */
@@ -176,6 +183,8 @@ void BlockThrottle::account(bool is_write, uint64_t size)
     buckets[THROTTLE_BPS_READ].level += size;
     buckets[THROTTLE_OPS_READ].level += units;
   }
+  if (!lock_hold)
+    lock.Unlock();
 }
 
 /* This function make a bucket leak
