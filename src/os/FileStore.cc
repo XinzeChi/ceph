@@ -2025,7 +2025,7 @@ int FileStore::queue_transactions(Sequencer *posr, list<Transaction*> &tls,
   if (onreadable_sync) {
     onreadable_sync->complete(r);
   }
-  ondisk_finishers[osr->id % ondisk_finisher_num]->queue(onreadable, r);
+  apply_finishers[osr->id % apply_finisher_num]->queue(onreadable, r);
 
   submit_manager.op_submit_finish(op);
   apply_manager.op_apply_finish(op);
