@@ -1056,7 +1056,7 @@ public:
       /* the IO will be executed, do the accounting */
       AioRequest *req = throttle_reqs[is_write].front();
       throttle_reqs[is_write].pop_front();
-      throttle.account(is_write, req->get_object_len());
+      throttle.account(is_write, req->get_object_len(), true);
 
       req->send();
     }
