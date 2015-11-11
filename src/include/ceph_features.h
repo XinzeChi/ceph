@@ -63,6 +63,8 @@
 #define CEPH_FEATURE_OSD_MIN_SIZE_RECOVERY (1ULL<<49)
 // duplicated since it was introduced at the same time as MIN_SIZE_RECOVERY
 #define CEPH_FEATURE_OSD_PROXY_FEATURES (1ULL<<49)  /* overlap w/ above */
+// xskyio private featrue
+#define CEPH_FEATURE_NEW_OSDOPREPLY_ENCODING   (1ULL<<60) /* New, v7 encoding */
 
 #define CEPH_FEATURE_RESERVED2 (1ULL<<61)  /* slow down, we are almost out... */
 #define CEPH_FEATURE_RESERVED  (1ULL<<62)  /* DO NOT USE THIS ... last bit! */
@@ -125,6 +127,7 @@ static inline unsigned long long ceph_sanitize_features(unsigned long long f) {
 	 CEPH_FEATURE_OSD_HBMSGS |		\
 	 CEPH_FEATURE_MDSENC |			\
 	 CEPH_FEATURE_OSDHASHPSPOOL |       \
+         CEPH_FEATURE_NEW_OSDOPREPLY_ENCODING | \
 	 CEPH_FEATURE_MON_SINGLE_PAXOS |    \
 	 CEPH_FEATURE_OSD_SNAPMAPPER |	    \
 	 CEPH_FEATURE_MON_SCRUB	|	    \
