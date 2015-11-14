@@ -69,25 +69,21 @@ class Monitor;
 
 /// information about a particular peer's failure reports for one osd
 struct failure_reporter_t {
-  int num_reports;          ///< reports from this reporter
   utime_t failed_since;     ///< when they think it failed
   MOSDFailure *msg;         ///< most recent failure message
 
-  failure_reporter_t() : num_reports(0), msg(NULL) {}
-  failure_reporter_t(utime_t s) : num_reports(1), failed_since(s), msg(NULL) {}
-  ~failure_reporter_t() {
-    // caller should have taken this message before removing the entry.
-    assert(!msg);
-  }
+  failure_reporter_t() {}
+  failure_reporter_t(utime_t s) : failed_since(s) {}
+  ~failure_reporter_t() { }
+
 };
 
 /// information about all failure reports for one osd
 struct failure_info_t {
-  map<int, failure_reporter_t> reporters;  ///< reporter -> # reports
+  map<int, failure_reporter_t> reporters;  ///< reporter -> failed_since etc
   utime_t max_failed_since;                ///< most recent failed_since
-  int num_reports;
 
-  failure_info_t() : num_reports(0) {}
+  failure_info_t() {}
 
   utime_t get_failed_since() {
     if (max_failed_since == utime_t() && !reporters.empty()) {
@@ -111,10 +107,7 @@ struct failure_info_t {
       else if (max_failed_since < failed_since)
 	max_failed_since = failed_since;
       p = reporters.insert(map<int, failure_reporter_t>::value_type(who, failure_reporter_t(failed_since))).first;
-    } else {
-      p->second.num_reports++;
     }
-    num_reports++;
 
     MOSDFailure *ret = p->second.msg;
     p->second.msg = msg;
@@ -136,7 +129,6 @@ struct failure_info_t {
     map<int, failure_reporter_t>::iterator p = reporters.find(who);
     if (p == reporters.end())
       return;
-    num_reports -= p->second.num_reports;
     reporters.erase(p);
     if (reporters.empty())
       max_failed_since = utime_t();
