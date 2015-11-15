@@ -115,7 +115,8 @@ bool BlockThrottle::config(BucketType type, double avg, double max)
     return false;
 
   buckets[type].avg = local[type].avg;
-  buckets[type].max = local[type].max;
+  // Ensure max value isn't zero if avg not zero
+  buckets[type].max = MAX(local[type].avg, local[type].max);
   enable = throttle_enabling(buckets);
   return true;
 }
@@ -192,7 +193,7 @@ void BlockThrottle::account(bool is_write, uint64_t size, bool lock_hold)
  * @bkt:   the bucket to make leak
  * @delta_ns: the time delta
  */
-void BlockThrottle::throttle_leak_bucket(LeakyBucket *bkt, int64_t delta_ns)
+void BlockThrottle::throttle_leak_bucket(LeakyBucket *bkt, uint64_t delta_ns)
 {
   /* compute how much to leak */
   double leak = (bkt->avg * (double) delta_ns) / NANOSECONDS_PER_SECOND;
