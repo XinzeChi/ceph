@@ -95,7 +95,7 @@ namespace librbd {
     RWLock object_map_lock; // protects object map updates and object_map itself
     Mutex async_ops_lock; // protects async_ops and async_requests
     Mutex copyup_list_lock; // protects copyup_waiting_list
-    Mutex throttle_lock; // protects throttle_reqs
+    Mutex throttle_lock; // protects throttle_req
 
     unsigned extra_read_flags;
 
@@ -129,7 +129,7 @@ namespace librbd {
     Cond async_requests_cond;
 
     BlockThrottle throttle;
-    std::list<AioRequest*> throttle_reqs[2];
+    std::list<AioRequest*> throttle_req;
 
     ObjectMap object_map;
 

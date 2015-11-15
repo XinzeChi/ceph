@@ -1026,16 +1026,18 @@ public:
     if (!throttle.enabled())
       return false;
 
-    /* does this io must wait */
-    bool must_wait = throttle.schedule_timer(is_write);
-
+    bool must_wait = 1;
     Mutex::Locker l(throttle_lock);
+    if (throttle_req.empty()) {
+      /* does this io must wait */
+      must_wait = throttle.schedule_timer(is_write);
+    }
     /* if must wait or any request of this type throttled queue the IO */
-    if (must_wait || !throttle_reqs[is_write].empty()) {
+    if (must_wait) {
       ldout(cct, 20) << __func__ << " req=" << req << " is_write=" << is_write
-                     << " throttle_req's size=" << throttle_reqs[is_write].size()
+                     << " throttle_req's size=" << throttle_req.size()
                      << " hit limit, wait to send" << dendl;
-      throttle_reqs[is_write].push_back(req);
+      throttle_req.push_back(req);
       return true;
     }
 
@@ -1049,22 +1051,28 @@ public:
   {
     ldout(cct, 20) << __func__ << " is_write=" << is_write << dendl;
     std::list<AioRequest*> reqs;
-    std::list<AioRequest*>::iterator it;
-    {
-      Mutex::Locker l(throttle_lock);
-      it = throttle_reqs[is_write].begin();
-      for (; it != throttle_reqs[is_write].end(); ++it) {
-        if (throttle.schedule_timer(is_write, true))
-          break;
+    throttle_lock.Lock();
+    std::list<AioRequest*>::iterator it = throttle_req.begin();
+    for (; it != throttle_req.end(); ++it) {
+      if (throttle.schedule_timer(is_write, true))
+        break;
 
-        /* the IO will be executed, do the accounting */
-        throttle.account(is_write, (*it)->get_object_len(), true);
-      }
-      reqs.splice(reqs.begin(), throttle_reqs[is_write],
-                  throttle_reqs[is_write].begin(), it);
+      /* the IO will be executed, do the accounting */
+      throttle.account(is_write, (*it)->get_object_len(), true);
     }
+    reqs.splice(reqs.begin(), throttle_req,
+                throttle_req.begin(), it);
+    bool empty = throttle_req.empty();
+    // We need to ensure io request send in ordering, so if no io in the queue,
+    // we need to keeping lock to ensure these requests issued firstly.
+    // Otherwise, we can release lock because front io can't be issued because
+    // of queue isn't empty
+    if (!empty)
+      throttle_lock.Unlock();
     it = reqs.begin();
     for (; it != reqs.end(); ++it)
         (*it)->send();
+    if (empty)
+      throttle_lock.Unlock();
   }
 }
