@@ -1048,17 +1048,23 @@ public:
   void ImageCtx::process_throttle_req(bool is_write)
   {
     ldout(cct, 20) << __func__ << " is_write=" << is_write << dendl;
-    Mutex::Locker l(throttle_lock);
-    while (!throttle_reqs[is_write].empty()) {
-      if (throttle.schedule_timer(is_write, true))
-        break;
+    std::list<AioRequest*> reqs;
+    std::list<AioRequest*>::iterator it;
+    {
+      Mutex::Locker l(throttle_lock);
+      it = throttle_reqs[is_write].begin();
+      for (; it != throttle_reqs[is_write].end(); ++it) {
+        if (throttle.schedule_timer(is_write, true))
+          break;
 
-      /* the IO will be executed, do the accounting */
-      AioRequest *req = throttle_reqs[is_write].front();
-      throttle_reqs[is_write].pop_front();
-      throttle.account(is_write, req->get_object_len(), true);
-
-      req->send();
+        /* the IO will be executed, do the accounting */
+        throttle.account(is_write, (*it)->get_object_len(), true);
+      }
+      reqs.splice(reqs.begin(), throttle_reqs[is_write],
+                  throttle_reqs[is_write].begin(), it);
     }
+    it = reqs.begin();
+    for (; it != reqs.end(); ++it)
+        (*it)->send();
   }
 }
