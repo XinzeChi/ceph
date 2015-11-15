@@ -138,12 +138,12 @@ TEST_F(TestThrottle, test_config_functions) {
   ASSERT_EQ(buckets[THROTTLE_OPS_TOTAL].avg, 0);
   ASSERT_EQ(buckets[THROTTLE_OPS_READ].avg, 69);
   ASSERT_EQ(buckets[THROTTLE_OPS_WRITE].avg, 23);
-  ASSERT_EQ(buckets[THROTTLE_BPS_TOTAL].max, 1);
+  ASSERT_EQ(buckets[THROTTLE_BPS_TOTAL].max, 153);
   ASSERT_EQ(buckets[THROTTLE_BPS_READ].max, 0);
   ASSERT_EQ(buckets[THROTTLE_BPS_WRITE].max, 0);
   ASSERT_EQ(buckets[THROTTLE_OPS_TOTAL].max, 0);
-  ASSERT_EQ(buckets[THROTTLE_OPS_READ].max, 1);
-  ASSERT_EQ(buckets[THROTTLE_OPS_WRITE].max, 1);
+  ASSERT_EQ(buckets[THROTTLE_OPS_READ].max, 69);
+  ASSERT_EQ(buckets[THROTTLE_OPS_WRITE].max, 23);
 }
 
 class FakeContext : public Context {

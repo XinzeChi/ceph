@@ -71,7 +71,7 @@ class BlockThrottle {
   BlockThrottle(CephContext *c, uint64_t op_size);
   ~BlockThrottle();
 
-  static void throttle_leak_bucket(LeakyBucket *bkt, int64_t delta_ns);
+  static void throttle_leak_bucket(LeakyBucket *bkt, uint64_t delta_ns);
   static double throttle_compute_wait(LeakyBucket *bkt);
   void attach_context(Context *reader, Context *writer);
 
