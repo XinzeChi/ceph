@@ -2864,12 +2864,12 @@ int PG::peek_map_epoch(ObjectStore *store,
 #pragma GCC diagnostic pop
 #pragma GCC diagnostic warning "-Wpragmas"
 
-void PG::write_if_dirty(ObjectStore::Transaction& t)
+void PG::write_if_dirty(ObjectStore::Transaction& t, map<string, bufferlist> *pglog_encode_checksum)
 {
   map<string,bufferlist> km;
   if (dirty_big_info || dirty_info)
     prepare_write_info(&km);
-  pg_log.write_log(t, &km, coll, pgmeta_oid);
+  pg_log.write_log(t, &km, coll, pgmeta_oid, pglog_encode_checksum);
   if (!km.empty())
     t.omap_setkeys(coll, pgmeta_oid, km);
 }
@@ -2922,6 +2922,7 @@ void PG::append_log(
   eversion_t trim_to,
   eversion_t trim_rollback_to,
   ObjectStore::Transaction &t,
+  map<string, bufferlist> *pglog_encode_checksum,
   bool transaction_applied)
 {
   if (transaction_applied)
@@ -2970,7 +2971,7 @@ void PG::append_log(
 
   // update the local pg, pg log
   dirty_info = true;
-  write_if_dirty(t);
+  write_if_dirty(t, pglog_encode_checksum);
 }
 
 bool PG::check_log_for_corruption(ObjectStore *store)

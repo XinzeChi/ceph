@@ -647,7 +647,8 @@ public:
   void write_log(ObjectStore::Transaction& t,
 		 map<string,bufferlist> *km,
 		 const coll_t& coll,
-		 const ghobject_t &log_oid);
+		 const ghobject_t &log_oid,
+                 map<string bufferlist> *pglog_encode_checksum = NULL);
 
   static void write_log(
     ObjectStore::Transaction& t,

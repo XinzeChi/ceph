@@ -739,7 +739,8 @@ void PGLog::check() {
 void PGLog::write_log(
   ObjectStore::Transaction& t,
   map<string,bufferlist> *km,
-  const coll_t& coll, const ghobject_t &log_oid)
+  const coll_t& coll, const ghobject_t &log_oid,
+  map<string, bufferlist> *pglog_encode_checksum)
 {
   if (is_dirty()) {
     dout(5) << "write_log with: "
@@ -759,7 +760,8 @@ void PGLog::write_log(
       trimmed,
       dirty_divergent_priors,
       !touched_log,
-      (pg_log_debug ? &log_keys_debug : 0));
+      (pg_log_debug ? &log_keys_debug : 0),
+      pglog_encode_checksum);
     undirty();
   } else {
     dout(10) << "log is not dirty" << dendl;
@@ -777,7 +779,7 @@ void PGLog::write_log(
     t, km, log, coll, log_oid,
     divergent_priors, eversion_t::max(), eversion_t(), eversion_t(),
     set<eversion_t>(),
-    true, true, 0);
+    true, true, 0, NULL);
 }
 
 void PGLog::_write_log(
@@ -792,7 +794,8 @@ void PGLog::_write_log(
   const set<eversion_t> &trimmed,
   bool dirty_divergent_priors,
   bool touch_log,
-  set<string> *log_keys_debug
+  set<string> *log_keys_debug,
+  map<string, bufferlist> *pglog_encode_checksum
   )
 {
   set<string> to_remove;
@@ -826,9 +829,14 @@ void PGLog::_write_log(
   for (list<pg_log_entry_t>::iterator p = log.log.begin();
        p != log.log.end() && p->version <= dirty_to;
        ++p) {
-    bufferlist bl(sizeof(*p) * 2);
-    p->encode_with_checksum(bl);
-    (*km)[p->get_key_name()].claim(bl);
+    if (!pglog_encode_checksum.count(p->get_key_name()) {
+      bufferlist bl(sizeof(*p) * 2);
+      p->encode_with_checksum(bl);
+      (*km)[p->get_key_name()].claim(bl);
+      pglog_encode_checksum[p->get_key_name()] = (*km)[p->get_key_name()];
+    } else {
+      (*km)[p->get_key_name()] = pglog_encode_checksum[p->get_key_name()];
+    }
   }
 
   for (list<pg_log_entry_t>::reverse_iterator p = log.log.rbegin();
@@ -836,9 +844,14 @@ void PGLog::_write_log(
 	 (p->version >= dirty_from || p->version >= writeout_from) &&
 	 p->version >= dirty_to;
        ++p) {
-    bufferlist bl(sizeof(*p) * 2);
-    p->encode_with_checksum(bl);
-    (*km)[p->get_key_name()].claim(bl);
+    if (!pglog_encode_checksum.count(p->get_key_name()) {
+      bufferlist bl(sizeof(*p) * 2);
+      p->encode_with_checksum(bl);
+      (*km)[p->get_key_name()].claim(bl);
+      pglog_encode_checksum[p->get_key_name()] = (*km)[p->get_key_name()];
+    } else {
+      (*km)[p->get_key_name()] = pglog_encode_checksum[p->get_key_name()];
+    }
   }
 
   if (log_keys_debug) {
