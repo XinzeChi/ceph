@@ -13,7 +13,10 @@
 
 #include "librbd/AsyncOperation.h"
 #include "librbd/ImageCtx.h"
+<<<<<<< HEAD
 #include "librbd/internal.h"
+=======
+>>>>>>> c57ceff... librbd: Fix rebase with new io flow
 
 #include "osdc/Striper.h"
 
@@ -74,6 +77,10 @@ namespace librbd {
 		      ref(1), released(false), ictx(NULL),
 		      aio_type(AIO_TYPE_NONE),
 		      read_bl(NULL), read_buf(NULL), read_buf_len(0),
+<<<<<<< HEAD
+=======
+                      journal_tid(0),
+>>>>>>> c57ceff... librbd: Fix rebase with new io flow
                       m_xlist_item(this), event_notify(false) {
     }
     ~AioCompletion() {
