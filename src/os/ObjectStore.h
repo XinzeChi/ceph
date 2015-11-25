@@ -452,7 +452,19 @@ public:
     list<Context *> on_commit;
     list<Context *> on_applied_sync;
 
+    bufferptr* trans_buf;
   public:
+     
+     void set_trans_buf(bufferptr* bp) {
+       trans_buf = bp;
+     }
+
+     bufferptr* get_trans_buf() {
+       if (trans_buf && trans_buf->get_raw()) {
+         assert(trans_buf->offset() == 0);
+       }
+       return trans_buf;
+     }
 
     /* Operations on callback contexts */
     void register_on_applied(Context *c) {
@@ -886,7 +898,7 @@ private:
         op_ptr = bufferptr(sizeof(Op) * OPS_PER_PTR);
       }
       bufferptr ptr(op_ptr, 0, sizeof(Op));
-      op_bl.append(ptr);
+      op_bl.append(ptr, 0, ptr.length());
 
       op_ptr.set_offset(op_ptr.offset() + sizeof(Op));
 
@@ -1583,13 +1595,15 @@ public:
       osr(NULL),
       use_tbl(false),
       coll_id(0),
-      object_id(0) { }
+      object_id(0),
+      trans_buf(NULL) { }
 
     Transaction(bufferlist::iterator &dp) :
       osr(NULL),
       use_tbl(false),
       coll_id(0),
-      object_id(0) {
+      object_id(0),
+      trans_buf(NULL) {
       decode(dp);
     }
 
@@ -1597,7 +1611,8 @@ public:
       osr(NULL),
       use_tbl(false),
       coll_id(0),
-      object_id(0) {
+      object_id(0),
+      trans_buf(NULL) {
       bufferlist::iterator dp = nbl.begin();
       decode(dp);
     }
