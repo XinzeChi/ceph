@@ -24,6 +24,8 @@
 
 using namespace ceph;
 
+const static int CEPH_BUFFERLIST_ENCODING_COPY_SIZE(32);
+
 /*
  * Notes on feature encoding:
  *
@@ -221,8 +223,11 @@ inline void encode(const buffer::ptr& bp, bufferlist& bl)
 {
   __u32 len = bp.length();
   encode(len, bl);
-  if (len)
+  if (len <= CEPH_BUFFERLIST_ENCODING_COPY_SIZE && len > 0) {
+    bl.append(bp.c_str(), bp.length());
+  } else if (len > 0) {
     bl.append(bp);
+  }
 }
 inline void decode(buffer::ptr& bp, bufferlist::iterator& p)
 {
@@ -245,7 +250,15 @@ inline void encode(const bufferlist& s, bufferlist& bl)
 {
   __u32 len = s.length();
   encode(len, bl);
-  bl.append(s);
+  if (len <= CEPH_BUFFERLIST_ENCODING_COPY_SIZE) {
+    for (std::list<bufferptr>::const_iterator it = s.buffers().begin();
+        it != s.buffers().end();
+        ++it) {
+      bl.append(it->c_str(), it->length());
+    }
+  } else {
+    bl.append(s);
+  }
 }
 inline void encode_destructively(bufferlist& s, bufferlist& bl) 
 {
