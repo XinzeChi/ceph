@@ -23,6 +23,14 @@ extern "C" {
 #include "PG.h"
 #include "OSDMap.h"
 #include "PGBackend.h"
+#include "include/inline_memory.h"
+
+
+inline void inline_encode_memcpy(char* dest, char* src, unsigned len, unsigned &end)
+{
+  maybe_inline_memcpy(dest, src, len, 32);
+  end += len;
+}
 
 const char *ceph_osd_flag_name(unsigned flag)
 {
@@ -1534,8 +1542,44 @@ void object_stat_sum_t::dump(Formatter *f) const
   f->dump_int("num_bytes_hit_set_archive", num_bytes_hit_set_archive);
 }
 
+void object_stat_sum_t::fast_encode(bufferlist& bl) const
+{
+  ENCODE_START(11, 3, bl);
+  char edata[sizeof(object_stat_sum_t)];
+  unsigned begin = 0, end = 0;
+  inline_encode_memcpy(edata + end, (char *)&num_bytes, sizeof(num_bytes), end);
+  inline_encode_memcpy(edata + end, (char *)&num_objects, sizeof(num_objects), end);
+  inline_encode_memcpy(edata + end, (char *)&num_object_clones, sizeof(num_object_clones), end);
+  inline_encode_memcpy(edata + end, (char *)&num_object_copies, sizeof(num_object_copies), end);
+  inline_encode_memcpy(edata + end, (char *)&num_objects_missing_on_primary, sizeof(num_objects_missing_on_primary), end);
+  inline_encode_memcpy(edata + end, (char *)&num_objects_degraded, sizeof(num_objects_degraded), end);
+  inline_encode_memcpy(edata + end, (char *)&num_objects_unfound, sizeof(num_objects_unfound), end);
+  inline_encode_memcpy(edata + end, (char *)&num_rd, sizeof(num_rd), end);
+  inline_encode_memcpy(edata + end, (char *)&num_rd_kb, sizeof(num_rd_kb), end);
+  inline_encode_memcpy(edata + end, (char *)&num_wr, sizeof(num_wr), end);
+  inline_encode_memcpy(edata + end, (char *)&num_wr_kb, sizeof(num_wr_kb), end);
+  inline_encode_memcpy(edata + end, (char *)&num_scrub_errors, sizeof(num_scrub_errors), end);
+  inline_encode_memcpy(edata + end, (char *)&num_objects_recovered, sizeof(num_objects_recovered), end);
+  inline_encode_memcpy(edata + end, (char *)&num_bytes_recovered, sizeof(num_bytes_recovered), end);
+  inline_encode_memcpy(edata + end, (char *)&num_keys_recovered, sizeof(num_keys_recovered), end);
+  inline_encode_memcpy(edata + end, (char *)&num_shallow_scrub_errors, sizeof(num_shallow_scrub_errors), end);
+  inline_encode_memcpy(edata + end, (char *)&num_deep_scrub_errors, sizeof(num_deep_scrub_errors), end);
+  inline_encode_memcpy(edata + end, (char *)&num_objects_dirty, sizeof(num_objects_dirty), end);
+  inline_encode_memcpy(edata + end, (char *)&num_whiteouts, sizeof(num_whiteouts), end);
+  inline_encode_memcpy(edata + end, (char *)&num_objects_omap, sizeof(num_objects_omap), end);
+  inline_encode_memcpy(edata + end, (char *)&num_objects_hit_set_archive, sizeof(num_objects_hit_set_archive), end);
+  inline_encode_memcpy(edata + end, (char *)&num_objects_misplaced, sizeof(num_objects_misplaced), end);
+  inline_encode_memcpy(edata + end, (char *)&num_bytes_hit_set_archive, sizeof(num_bytes_hit_set_archive), end);
+  bl.append(edata+ + begin, end - begin);
+  ENCODE_FINISH(bl);
+}
+
 void object_stat_sum_t::encode(bufferlist& bl) const
 {
+  if (!IS_BIG_ENDIAN) {
+    fast_encode(bl);
+    return;
+  }
   ENCODE_START(11, 3, bl);
   ::encode(num_bytes, bl);
   ::encode(num_objects, bl);
@@ -1863,8 +1907,90 @@ void pg_stat_t::dump_brief(Formatter *f) const
   f->dump_int("acting_primary", acting_primary);
 }
 
+void pg_stat_t::fast_encode(bufferlist &bl) const
+{
+  ENCODE_START(21, 8, bl);
+  char edata[sizeof(pg_stat_t)];
+  unsigned begin = 0, end = 0;
+  ::encode(version, bl);
+  inline_encode_memcpy(edata + end, (char *)&reported_seq, sizeof(reported_seq), end);
+  inline_encode_memcpy(edata + end, (char *)&reported_epoch, sizeof(reported_epoch), end);
+  inline_encode_memcpy(edata + end, (char *)&state, sizeof(state), end);
+  bl.append(edata + begin, end - begin);
+  begin = end;
+
+  ::encode(log_start, bl);
+  ::encode(ondisk_log_start, bl);
+
+  inline_encode_memcpy(edata + end, (char *)&created, sizeof(created), end);
+  inline_encode_memcpy(edata + end, (char *)&last_epoch_clean, sizeof(last_epoch_clean), end);
+  bl.append(edata + begin, end - begin);
+  begin = end;
+
+  ::encode(parent, bl);
+
+  inline_encode_memcpy(edata + end, (char *)&parent_split_bits, sizeof(parent_split_bits), end);
+  bl.append(edata + begin, end - begin);
+  begin = end;
+
+  ::encode(last_scrub, bl);
+
+  inline_encode_memcpy(edata + end, (char *)&last_scrub_stamp, sizeof(last_scrub_stamp), end);
+  bl.append(edata + begin, end - begin);
+  begin = end;
+
+  ::encode(stats, bl);
+
+  inline_encode_memcpy(edata + end, (char *)&log_size, sizeof(log_size), end);
+  inline_encode_memcpy(edata + end, (char *)&ondisk_log_size, sizeof(ondisk_log_size), end);
+  bl.append(edata + begin, end - begin);
+  begin = end;
+
+  ::encode(up, bl);
+  ::encode(acting, bl);
+
+  inline_encode_memcpy(edata + end, (char *)&last_fresh, sizeof(last_fresh), end);
+  inline_encode_memcpy(edata + end, (char *)&last_change, sizeof(last_change), end);
+  inline_encode_memcpy(edata + end, (char *)&last_active, sizeof(last_active), end);
+  inline_encode_memcpy(edata + end, (char *)&last_clean, sizeof(last_clean), end);
+  inline_encode_memcpy(edata + end, (char *)&last_unstale, sizeof(last_unstale), end);
+  inline_encode_memcpy(edata + end, (char *)&mapping_epoch, sizeof(mapping_epoch), end);
+  bl.append(edata + begin, end - begin);
+  begin = end;
+
+  ::encode(last_deep_scrub, bl);
+
+  inline_encode_memcpy(edata + end, (char *)&last_deep_scrub_stamp, sizeof(last_deep_scrub_stamp), end);
+  inline_encode_memcpy(edata + end, (char *)&stats_invalid, sizeof(stats_invalid), end);
+  inline_encode_memcpy(edata + end, (char *)&last_clean_scrub_stamp, sizeof(last_clean_scrub_stamp), end);
+  inline_encode_memcpy(edata + end, (char *)&last_became_active, sizeof(last_became_active), end);
+  inline_encode_memcpy(edata + end, (char *)&dirty_stats_invalid, sizeof(dirty_stats_invalid), end);
+  inline_encode_memcpy(edata + end, (char *)&up_primary, sizeof(up_primary), end);
+  inline_encode_memcpy(edata + end, (char *)&acting_primary, sizeof(acting_primary), end);
+  inline_encode_memcpy(edata + end, (char *)&omap_stats_invalid, sizeof(omap_stats_invalid), end);
+  inline_encode_memcpy(edata + end, (char *)&hitset_stats_invalid, sizeof(hitset_stats_invalid), end);
+  bl.append(edata + begin, end - begin);
+  begin = end;
+
+  ::encode(blocked_by, bl);
+
+  inline_encode_memcpy(edata + end, (char *)&last_undegraded, sizeof(last_undegraded), end);
+  inline_encode_memcpy(edata + end, (char *)&last_fullsized, sizeof(last_fullsized), end);
+  inline_encode_memcpy(edata + end, (char *)&hitset_bytes_stats_invalid, sizeof(hitset_bytes_stats_invalid), end);
+  inline_encode_memcpy(edata + end, (char *)&last_peered, sizeof(last_peered), end);
+  inline_encode_memcpy(edata + end, (char *)&last_became_peered, sizeof(last_became_peered), end);
+  bl.append(edata + begin, end - begin);
+  begin = end;
+
+  ENCODE_FINISH(bl);
+}
+
 void pg_stat_t::encode(bufferlist &bl) const
 {
+  if (!IS_BIG_ENDIAN) {
+    fast_encode(bl);
+    return;
+  }
   ENCODE_START(21, 8, bl);
   ::encode(version, bl);
   ::encode(reported_seq, bl);
@@ -2224,8 +2350,41 @@ void pool_stat_t::generate_test_instances(list<pool_stat_t*>& o)
 
 // -- pg_history_t --
 
+void pg_history_t::fast_encode(bufferlist &bl) const
+{
+  ENCODE_START(6, 4, bl);
+  char edata[sizeof(pg_history_t)];
+  unsigned begin = 0, end = 0;
+  inline_encode_memcpy(edata + end, (char *)&epoch_created, sizeof(epoch_created), end);
+  inline_encode_memcpy(edata + end, (char *)&last_epoch_started, sizeof(last_epoch_started), end);
+  inline_encode_memcpy(edata + end, (char *)&last_epoch_clean, sizeof(last_epoch_clean), end);
+  inline_encode_memcpy(edata + end, (char *)&last_epoch_split, sizeof(last_epoch_split), end);
+  inline_encode_memcpy(edata + end, (char *)&same_interval_since, sizeof(same_interval_since), end);
+  inline_encode_memcpy(edata + end, (char *)&same_up_since, sizeof(same_up_since), end);
+  inline_encode_memcpy(edata + end, (char *)&same_primary_since, sizeof(same_primary_since), end);
+  bl.append(edata + begin, end - begin);
+  begin = end;
+
+  ::encode(last_scrub, bl);
+
+  inline_encode_memcpy(edata + end, (char *)&last_scrub_stamp, sizeof(last_scrub_stamp), end);
+  bl.append(edata + begin, end - begin);
+  begin = end;
+
+  ::encode(last_deep_scrub, bl);
+
+  inline_encode_memcpy(edata + end, (char *)&last_deep_scrub_stamp, sizeof(last_deep_scrub_stamp), end);
+  inline_encode_memcpy(edata + end, (char *)&last_clean_scrub_stamp, sizeof(last_clean_scrub_stamp), end);
+  bl.append(edata + begin, end - begin);
+  ENCODE_FINISH(bl);
+}
+
 void pg_history_t::encode(bufferlist &bl) const
 {
+  if (!IS_BIG_ENDIAN) {
+    fast_encode(bl);
+    return;
+  }
   ENCODE_START(6, 4, bl);
   ::encode(epoch_created, bl);
   ::encode(last_epoch_started, bl);

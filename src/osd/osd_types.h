@@ -1354,6 +1354,7 @@ struct object_stat_sum_t {
   void sub(const object_stat_sum_t& o);
 
   void dump(Formatter *f) const;
+  void fast_encode(bufferlist& bl) const;
   void encode(bufferlist& bl) const;
   void decode(bufferlist::iterator& bl);
   static void generate_test_instances(list<object_stat_sum_t*>& o);
@@ -1525,6 +1526,7 @@ struct pg_stat_t {
   bool is_acting_osd(int32_t osd, bool primary) const;
   void dump(Formatter *f) const;
   void dump_brief(Formatter *f) const;
+  void fast_encode(bufferlist &bl) const;
   void encode(bufferlist &bl) const;
   void decode(bufferlist::iterator &bl);
   static void generate_test_instances(list<pg_stat_t*>& o);
@@ -1710,6 +1712,7 @@ struct pg_history_t {
     return modified;
   }
 
+  void fast_encode(bufferlist& bl) const;
   void encode(bufferlist& bl) const;
   void decode(bufferlist::iterator& p);
   void dump(Formatter *f) const;

@@ -24,6 +24,9 @@
 
 using namespace ceph;
 
+const int endianess = 1;
+#define IS_BIG_ENDIAN ((*(unsigned char*)&endianess) == 0)
+
 /*
  * Notes on feature encoding:
  *
@@ -86,16 +89,24 @@ inline void decode(bool &v, bufferlist::iterator& p) {
 // -----------------------------------
 // int types
 
-#define WRITE_INTTYPE_ENCODER(type, etype)				\
-  inline void encode(type v, bufferlist& bl, uint64_t features=0) {	\
-    ceph_##etype e;					                \
-    e = v;                                                              \
-    encode_raw(e, bl);							\
-  }									\
-  inline void decode(type &v, bufferlist::iterator& p) {		\
-    ceph_##etype e;							\
-    decode_raw(e, p);							\
-    v = e;								\
+#define WRITE_INTTYPE_ENCODER(type, etype)                              \
+  inline void encode(type v, bufferlist& bl, uint64_t features=0) {     \
+    if (IS_BIG_ENDIAN) {                                                \
+      ceph_##etype e;                                                   \
+      e = v;                                                            \
+      encode_raw(e, bl);                                                \
+    } else {                                                            \
+      encode_raw(v, bl);                                                \
+    }                                                                   \
+  }                                                                     \
+  inline void decode(type &v, bufferlist::iterator& p) {                \
+    if (IS_BIG_ENDIAN) {                                                \
+      ceph_##etype e;                                                   \
+      decode_raw(e, p);                                                 \
+      v = e;                                                            \
+    } else {                                                            \
+      decode_raw(v, p);                                                 \
+    }                                                                   \
   }
 
 WRITE_INTTYPE_ENCODER(uint64_t, le64)

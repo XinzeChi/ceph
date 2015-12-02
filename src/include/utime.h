@@ -96,12 +96,20 @@ public:
   }
 
   void encode(bufferlist &bl) const {
-    ::encode(tv.tv_sec, bl);
-    ::encode(tv.tv_nsec, bl);
+    if (!IS_BIG_ENDIAN) {
+      bl.append((char *)(&tv.tv_sec), sizeof(tv));
+    } else {
+      ::encode(tv.tv_sec, bl);
+      ::encode(tv.tv_nsec, bl);
+    }
   }
   void decode(bufferlist::iterator &p) {
-    ::decode(tv.tv_sec, p);
-    ::decode(tv.tv_nsec, p);
+    if (!IS_BIG_ENDIAN) {
+      p.copy(sizeof(tv), (char *)(&tv.tv_sec));
+    } else {
+      ::decode(tv.tv_sec, p);
+      ::decode(tv.tv_nsec, p);
+    }
   }
 
   void encode_timeval(struct ceph_timespec *t) const {
