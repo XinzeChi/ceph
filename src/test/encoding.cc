@@ -196,3 +196,26 @@ TEST(EncodingRoundTrip, MultimapConstructorCounter) {
   EXPECT_EQ(my_val_t::get_copy_ctor(), 10);
   EXPECT_EQ(my_val_t::get_assigns(), 0);
 }
+
+TEST(EncodeBench, PGStat) {
+  struct pg_stat_t stats;
+  for (int j = 0; j < 1000; ++j) {
+      bufferlist bl;
+      for (int i = 0; i < 1000; ++i) {
+          encode(stats, bl);
+      }
+  }
+}
+
+TEST(DecodeBench, PGStat) {
+  struct pg_stat_t stats;
+  bufferlist bl;
+  encode(stats, bl);
+  for (int j = 0; j < 1000; ++j) {
+      bufferlist::iterator it(bl.begin());
+      for (int i = 0; i < 1000; ++i) {
+          decode(stats, bl);
+      }
+  }
+}
+
