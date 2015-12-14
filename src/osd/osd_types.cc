@@ -1527,6 +1527,9 @@ void object_stat_sum_t::dump(Formatter *f) const
 void object_stat_sum_t::encode(bufferlist& bl) const
 {
   ENCODE_START(11, 3, bl);
+#if defined(CEPH_LITTLE_ENDIAN)
+  bl.append((char *)(&num_bytes), sizeof(object_stat_sum_t));
+#else
   ::encode(num_bytes, bl);
   ::encode(num_objects, bl);
   ::encode(num_object_clones, bl);
@@ -1550,74 +1553,84 @@ void object_stat_sum_t::encode(bufferlist& bl) const
   ::encode(num_objects_hit_set_archive, bl);
   ::encode(num_objects_misplaced, bl);
   ::encode(num_bytes_hit_set_archive, bl);
+#endif
   ENCODE_FINISH(bl);
 }
 
 void object_stat_sum_t::decode(bufferlist::iterator& bl)
 {
+  bool decode_finish = false;
   DECODE_START_LEGACY_COMPAT_LEN(11, 3, 3, bl);
-  ::decode(num_bytes, bl);
-  if (struct_v < 3) {
-    uint64_t num_kb;
-    ::decode(num_kb, bl);
-  }
-  ::decode(num_objects, bl);
-  ::decode(num_object_clones, bl);
-  ::decode(num_object_copies, bl);
-  ::decode(num_objects_missing_on_primary, bl);
-  ::decode(num_objects_degraded, bl);
-  if (struct_v >= 2)
-    ::decode(num_objects_unfound, bl);
-  ::decode(num_rd, bl);
-  ::decode(num_rd_kb, bl);
-  ::decode(num_wr, bl);
-  ::decode(num_wr_kb, bl);
-  if (struct_v >= 4)
-    ::decode(num_scrub_errors, bl);
-  else
-    num_scrub_errors = 0;
-  if (struct_v >= 5) {
-    ::decode(num_objects_recovered, bl);
-    ::decode(num_bytes_recovered, bl);
-    ::decode(num_keys_recovered, bl);
-  } else {
-    num_objects_recovered = 0;
-    num_bytes_recovered = 0;
-    num_keys_recovered = 0;
-  }
-  if (struct_v >= 6) {
-    ::decode(num_shallow_scrub_errors, bl);
-    ::decode(num_deep_scrub_errors, bl);
-  } else {
-    num_shallow_scrub_errors = 0;
-    num_deep_scrub_errors = 0;
-  }
-  if (struct_v >= 7) {
-    ::decode(num_objects_dirty, bl);
-    ::decode(num_whiteouts, bl);
-  } else {
-    num_objects_dirty = 0;
-    num_whiteouts = 0;
-  }
-  if (struct_v >= 8) {
-    ::decode(num_objects_omap, bl);
-  } else {
-    num_objects_omap = 0;
-  }
-  if (struct_v >= 9) {
-    ::decode(num_objects_hit_set_archive, bl);
-  } else {
-    num_objects_hit_set_archive = 0;
-  }
-  if (struct_v >= 10) {
-    ::decode(num_objects_misplaced, bl);
-  } else {
-    num_objects_misplaced = 0;
-  }
+#if defined(CEPH_LITTLE_ENDIAN)
   if (struct_v >= 11) {
-    ::decode(num_bytes_hit_set_archive, bl);
-  } else {
-    num_bytes_hit_set_archive = 0;
+    bl.copy(sizeof(object_stat_sum_t), (char*)(&num_bytes));
+    decode_finish = true;
+  }
+#endif
+  if (!decode_finish) {
+    ::decode(num_bytes, bl);
+    if (struct_v < 3) {
+      uint64_t num_kb;
+      ::decode(num_kb, bl);
+    }
+    ::decode(num_objects, bl);
+    ::decode(num_object_clones, bl);
+    ::decode(num_object_copies, bl);
+    ::decode(num_objects_missing_on_primary, bl);
+    ::decode(num_objects_degraded, bl);
+    if (struct_v >= 2)
+      ::decode(num_objects_unfound, bl);
+    ::decode(num_rd, bl);
+    ::decode(num_rd_kb, bl);
+    ::decode(num_wr, bl);
+    ::decode(num_wr_kb, bl);
+    if (struct_v >= 4)
+      ::decode(num_scrub_errors, bl);
+    else
+      num_scrub_errors = 0;
+    if (struct_v >= 5) {
+      ::decode(num_objects_recovered, bl);
+      ::decode(num_bytes_recovered, bl);
+      ::decode(num_keys_recovered, bl);
+    } else {
+      num_objects_recovered = 0;
+      num_bytes_recovered = 0;
+      num_keys_recovered = 0;
+    }
+    if (struct_v >= 6) {
+      ::decode(num_shallow_scrub_errors, bl);
+      ::decode(num_deep_scrub_errors, bl);
+    } else {
+      num_shallow_scrub_errors = 0;
+      num_deep_scrub_errors = 0;
+    }
+    if (struct_v >= 7) {
+      ::decode(num_objects_dirty, bl);
+      ::decode(num_whiteouts, bl);
+    } else {
+      num_objects_dirty = 0;
+      num_whiteouts = 0;
+    }
+    if (struct_v >= 8) {
+      ::decode(num_objects_omap, bl);
+    } else {
+      num_objects_omap = 0;
+    }
+    if (struct_v >= 9) {
+      ::decode(num_objects_hit_set_archive, bl);
+    } else {
+      num_objects_hit_set_archive = 0;
+    }
+    if (struct_v >= 10) {
+      ::decode(num_objects_misplaced, bl);
+    } else {
+      num_objects_misplaced = 0;
+    }
+    if (struct_v >= 11) {
+      ::decode(num_bytes_hit_set_archive, bl);
+    } else {
+      num_bytes_hit_set_archive = 0;
+    }
   }
   DECODE_FINISH(bl);
 }
