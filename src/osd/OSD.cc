@@ -233,6 +233,8 @@ OSDService::OSDService(OSD *osd) :
 		  cct->_conf->osd_min_recovery_priority),
   pg_temp_lock("OSDService::pg_temp_lock"),
   map_cache_lock("OSDService::map_lock"),
+  get_map_last_epoch(0),
+  get_map_last_retval(OSDMapRef()),
   map_cache(cct, cct->_conf->osd_map_cache_size),
   map_bl_cache(cct->_conf->osd_map_cache_size),
   map_bl_inc_cache(cct->_conf->osd_map_cache_size),
@@ -460,6 +462,7 @@ void OSDService::shutdown()
   }
   osdmap = OSDMapRef();
   next_osdmap = OSDMapRef();
+  get_map_last_retval = OSDMapRef();
 }
 
 void OSDService::init()
@@ -1165,10 +1168,13 @@ OSDMapRef OSDService::_add_map(OSDMap *o)
 OSDMapRef OSDService::try_get_map(epoch_t epoch)
 {
   Mutex::Locker l(map_cache_lock);
-  OSDMapRef retval = map_cache.lookup(epoch);
-  if (retval) {
+  if (get_map_last_epoch != epoch) {
+    get_map_last_epoch = epoch;
+    get_map_last_retval = map_cache.lookup(epoch);
+  }
+  if (get_map_last_retval) {
     dout(30) << "get_map " << epoch << " -cached" << dendl;
-    return retval;
+    return get_map_last_retval;
   }
 
   OSDMap *map = new OSDMap;
@@ -1183,7 +1189,9 @@ OSDMapRef OSDService::try_get_map(epoch_t epoch)
   } else {
     dout(20) << "get_map " << epoch << " - return initial " << map << dendl;
   }
-  return _add_map(map);
+  get_map_last_epoch = epoch;
+  get_map_last_retval = _add_map(map);
+  return get_map_last_retval;
 }
 
 bool OSDService::queue_for_recovery(PG *pg)
