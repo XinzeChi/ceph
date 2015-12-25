@@ -139,8 +139,8 @@ private:
 
   // Indexed Collections
   IndexManager index_manager;
-  int get_index(coll_t c, Index *index);
-  int init_index(coll_t c);
+  int get_index(const coll_t& c, Index *index);
+  int init_index(const coll_t& c);
 
   // ObjectMap
   boost::scoped_ptr<DBObjectMap> object_map;
@@ -262,7 +262,7 @@ private:
   } pgmeta_cache;
 
   // helper fns
-  int get_cdir(coll_t cid, char *s, int len);
+  int get_cdir(const coll_t& cid, char *s, int len);
   
   /// read a uuid from fd
   int read_fsid(int fd, uuid_d *uuid);
@@ -506,9 +506,9 @@ public:
   int lfn_find(const ghobject_t& oid, const Index& index, 
                                   IndexedPath *path = NULL);
   int lfn_truncate(coll_t cid, const ghobject_t& oid, off_t length);
-  int lfn_stat(coll_t cid, const ghobject_t& oid, struct stat *buf);
+  int lfn_stat(const coll_t& cid, const ghobject_t& oid, struct stat *buf);
   int lfn_open(
-    coll_t cid,
+    const coll_t& cid,
     const ghobject_t& oid,
     bool create,
     FDRef *outfd,
@@ -624,9 +624,9 @@ public:
    * @return 1 if we can apply (maybe replay) this operation, -1 if spos has already been applied, 0 if it was in progress
    */
   int _check_replay_guard(int fd, const SequencerPosition& spos);
-  int _check_replay_guard(coll_t cid, const SequencerPosition& spos);
-  int _check_replay_guard(coll_t cid, ghobject_t oid, const SequencerPosition& pos);
-  int _check_global_replay_guard(coll_t cid, const SequencerPosition& spos);
+  int _check_replay_guard(const coll_t& cid, const SequencerPosition& spos);
+  int _check_replay_guard(const coll_t& cid, const ghobject_t& oid, const SequencerPosition& pos);
+  int _check_global_replay_guard(const coll_t& cid, const SequencerPosition& spos);
 
   // ------------------
   // objects

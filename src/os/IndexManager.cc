@@ -73,7 +73,7 @@ IndexManager::~IndexManager() {
 }
 
 
-int IndexManager::init_index(coll_t c, const char *path, uint32_t version) {
+int IndexManager::init_index(const coll_t& c, const char *path, uint32_t version) {
   Mutex::Locker l(lock);
   int r = set_version(path, version);
   if (r < 0)
@@ -85,7 +85,7 @@ int IndexManager::init_index(coll_t c, const char *path, uint32_t version) {
   return index.init();
 }
 
-int IndexManager::build_index(coll_t c, const char *path, CollectionIndex **index) {
+int IndexManager::build_index(const coll_t& c, const char *path, CollectionIndex **index) {
   if (upgrade) {
     // Need to check the collection generation
     int r;
@@ -120,7 +120,7 @@ int IndexManager::build_index(coll_t c, const char *path, CollectionIndex **inde
   }
 }
 
-int IndexManager::get_index(coll_t c, const string& baseDir, Index *index) {
+int IndexManager::get_index(const coll_t& c, const string& baseDir, Index *index) {
 
   Mutex::Locker l(lock);
   ceph::unordered_map<coll_t, CollectionIndex* > ::iterator it = col_indices.find(c);

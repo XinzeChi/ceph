@@ -780,30 +780,32 @@ public:
 
       bufferlist::iterator data_bl_p;
 
-      vector<coll_t> colls;
-      vector<ghobject_t> objects;
+      vector<const coll_t *> colls;
+      vector<const ghobject_t *> objects;
 
       iterator(Transaction *t)
         : t(t),
 	  data_bl_p(t->data_bl.begin()),
-          colls(t->coll_index.size()),
           objects(t->object_index.size()) {
 
         ops = t->data.ops;
         op_buffer_p = t->op_bl.get_contiguous(0, t->data.ops * sizeof(Op));
 
-        map<coll_t, __le32>::iterator coll_index_p;
-        for (coll_index_p = t->coll_index.begin();
-             coll_index_p != t->coll_index.end();
-             ++coll_index_p) {
-          colls[coll_index_p->second] = coll_index_p->first;
+        if (t->coll_index.size() != 1) {
+          colls.resize(t->coll_index.size());
+          map<coll_t, __le32>::iterator coll_index_p;
+          for (coll_index_p = t->coll_index.begin();
+               coll_index_p != t->coll_index.end();
+               ++coll_index_p) {
+            colls[coll_index_p->second] = &(coll_index_p->first);
+          }
         }
 
         map<ghobject_t, __le32>::iterator object_index_p;
         for (object_index_p = t->object_index.begin();
              object_index_p != t->object_index.end();
              ++object_index_p) {
-          objects[object_index_p->second] = object_index_p->first;
+          objects[object_index_p->second] = &(object_index_p->first);
         }
       }
 
@@ -841,13 +843,17 @@ public:
         ::decode(keys, data_bl_p);
       }
 
-      ghobject_t get_oid(__le32 oid_id) {
+      const ghobject_t &get_oid(__le32 oid_id) {
         assert(oid_id < objects.size());
-        return objects[oid_id];
+        return *objects[oid_id];
       }
-      coll_t get_cid(__le32 cid_id) {
-        assert(cid_id < colls.size());
-        return colls[cid_id];
+      const coll_t &get_cid(__le32 cid_id) {
+        if (t->coll_index.size() == 1) {
+          return t->coll_index.begin()->first;
+        } else {
+          assert(cid_id < colls.size());
+          return *colls[cid_id];
+        }
       }
       uint32_t get_fadvise_flags() const {
 	return t->get_fadvise_flags();
