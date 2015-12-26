@@ -103,9 +103,9 @@ public:
     Context *on_local_applied_sync,
     Context *on_all_applied,
     Context *on_all_commit,
-    ceph_tid_t tid,
-    osd_reqid_t reqid,
-    OpRequestRef op
+    ceph_tid_t &tid,
+    osd_reqid_t &reqid,
+    OpRequestRef &op
     );
 
   int objects_read_sync(

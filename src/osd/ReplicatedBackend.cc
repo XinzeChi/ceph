@@ -556,9 +556,9 @@ void ReplicatedBackend::submit_transaction(
   Context *on_local_applied_sync,
   Context *on_all_acked,
   Context *on_all_commit,
-  ceph_tid_t tid,
-  osd_reqid_t reqid,
-  OpRequestRef orig_op)
+  ceph_tid_t &tid,
+  osd_reqid_t &reqid,
+  OpRequestRef &orig_op)
 {
   RPGTransaction *t = dynamic_cast<RPGTransaction*>(_t);
   assert(t);
@@ -975,12 +975,12 @@ template<typename T, int MSGTYPE>
 Message * ReplicatedBackend::generate_subop(
   const hobject_t &soid,
   const eversion_t &at_version,
-  ceph_tid_t tid,
-  osd_reqid_t reqid,
-  eversion_t pg_trim_to,
-  eversion_t pg_trim_rollback_to,
-  hobject_t new_temp_oid,
-  hobject_t discard_temp_oid,
+  const ceph_tid_t &tid,
+  const osd_reqid_t &reqid,
+  const eversion_t &pg_trim_to,
+  const eversion_t &pg_trim_rollback_to,
+  const hobject_t &new_temp_oid,
+  const hobject_t &discard_temp_oid,
   const vector<pg_log_entry_t> &log_entries,
   boost::optional<pg_hit_set_history_t> &hset_hist,
   InProgressOp *op,
@@ -1031,12 +1031,12 @@ Message * ReplicatedBackend::generate_subop(
 void ReplicatedBackend::issue_op(
   const hobject_t &soid,
   const eversion_t &at_version,
-  ceph_tid_t tid,
-  osd_reqid_t reqid,
-  eversion_t pg_trim_to,
-  eversion_t pg_trim_rollback_to,
-  hobject_t new_temp_oid,
-  hobject_t discard_temp_oid,
+  const ceph_tid_t &tid,
+  const osd_reqid_t &reqid,
+  const eversion_t &pg_trim_to,
+  const eversion_t &pg_trim_rollback_to,
+  const hobject_t &new_temp_oid,
+  const hobject_t &discard_temp_oid,
   const vector<pg_log_entry_t> &log_entries,
   boost::optional<pg_hit_set_history_t> &hset_hist,
   InProgressOp *op,
@@ -1056,7 +1056,7 @@ void ReplicatedBackend::issue_op(
        i != parent->get_actingbackfill_shards().end();
        ++i) {
     if (*i == parent->whoami_shard()) continue;
-    pg_shard_t peer = *i;
+    const pg_shard_t &peer = *i;
     const pg_info_t &pinfo = parent->get_shard_info().find(peer)->second;
 
     Message *wr;
