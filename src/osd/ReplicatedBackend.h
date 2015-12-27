@@ -333,7 +333,7 @@ private:
 	waiting_for_applied.empty();
     }
   };
-  map<ceph_tid_t, InProgressOp> in_progress_ops;
+  unordered_map<ceph_tid_t, InProgressOp> in_progress_ops;
 public:
   PGTransaction *get_transaction();
   friend class C_OSD_OnOpCommit;
