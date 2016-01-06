@@ -41,6 +41,7 @@
 #include "OpRequest.h"
 #include "include/cmp.h"
 #include "librados/ListObjectImpl.h"
+#include <boost/static_assert.hpp>
 
 #define CEPH_OSD_ONDISK_MAGIC "ceph osd volume v026"
 
@@ -572,6 +573,10 @@ inline ostream& operator<<(ostream& out, const ceph_object_layout &ol)
 
 
 // compound rados version type
+/* WARNING: If add member in eversion_t, please make sure the encode/decode function
+ * work well. For little-endian machine, we should make sure there is no padding
+ * in 32-bit machine and 64-bit machine.
+ */
 class eversion_t {
 public:
   version_t version;
@@ -604,12 +609,20 @@ public:
   string get_key_name() const;
 
   void encode(bufferlist &bl) const {
+#if defined(CEPH_LITTLE_ENDIAN)
+    bl.append((char *)this, sizeof(version_t) + sizeof(epoch_t));
+#else
     ::encode(version, bl);
     ::encode(epoch, bl);
+#endif
   }
   void decode(bufferlist::iterator &bl) {
+#if defined(CEPH_LITTLE_ENDIAN)
+    bl.copy(sizeof(version_t) + sizeof(epoch_t), (char *)this);
+#else
     ::decode(version, bl);
     ::decode(epoch, bl);
+#endif
   }
   void decode(bufferlist& bl) {
     bufferlist::iterator p = bl.begin();
@@ -1204,6 +1217,11 @@ ostream& operator<<(ostream& out, const pg_pool_t& p);
  * a summation of object stats
  *
  * This is just a container for object stats; we don't know what for.
+ *
+ * If you add members in object_stat_sum_t, you should make sure there are
+ * not padding among these members.
+ * You should also modify the padding_check function.
+
  */
 struct object_stat_sum_t {
   /**************************************************************************
@@ -1216,40 +1234,41 @@ struct object_stat_sum_t {
   int64_t num_object_copies;  // num_objects * num_replicas
   int64_t num_objects_missing_on_primary;
   int64_t num_objects_degraded;
-  int64_t num_objects_misplaced;
   int64_t num_objects_unfound;
   int64_t num_rd;
   int64_t num_rd_kb;
   int64_t num_wr;
   int64_t num_wr_kb;
   int64_t num_scrub_errors;	// total deep and shallow scrub errors
-  int64_t num_shallow_scrub_errors;
-  int64_t num_deep_scrub_errors;
   int64_t num_objects_recovered;
   int64_t num_bytes_recovered;
   int64_t num_keys_recovered;
+  int64_t num_shallow_scrub_errors;
+  int64_t num_deep_scrub_errors;
   int64_t num_objects_dirty;
   int64_t num_whiteouts;
   int64_t num_objects_omap;
   int64_t num_objects_hit_set_archive;
+  int64_t num_objects_misplaced;
   int64_t num_bytes_hit_set_archive;
 
   object_stat_sum_t()
     : num_bytes(0),
       num_objects(0), num_object_clones(0), num_object_copies(0),
       num_objects_missing_on_primary(0), num_objects_degraded(0),
-      num_objects_misplaced(0),
       num_objects_unfound(0),
       num_rd(0), num_rd_kb(0), num_wr(0), num_wr_kb(0),
-      num_scrub_errors(0), num_shallow_scrub_errors(0),
-      num_deep_scrub_errors(0),
+      num_scrub_errors(0),
       num_objects_recovered(0),
       num_bytes_recovered(0),
       num_keys_recovered(0),
+      num_shallow_scrub_errors(0),
+      num_deep_scrub_errors(0),
       num_objects_dirty(0),
       num_whiteouts(0),
       num_objects_omap(0),
       num_objects_hit_set_archive(0),
+      num_objects_misplaced(0),
       num_bytes_hit_set_archive(0)
   {}
 
@@ -1333,6 +1352,33 @@ struct object_stat_sum_t {
   void sub(const object_stat_sum_t& o);
 
   void dump(Formatter *f) const;
+  void padding_check() {
+    BOOST_STATIC_ASSERT(
+      sizeof(object_stat_sum_t) ==
+        sizeof(num_bytes) +
+        sizeof(num_objects) +
+        sizeof(num_object_clones) +
+        sizeof(num_object_copies) +
+        sizeof(num_objects_missing_on_primary) +
+        sizeof(num_objects_degraded) +
+        sizeof(num_objects_unfound) +
+        sizeof(num_rd) +
+        sizeof(num_rd_kb) +
+        sizeof(num_wr) +
+        sizeof(num_wr_kb) +
+        sizeof(num_scrub_errors) +
+        sizeof(num_objects_recovered) +
+        sizeof(num_bytes_recovered) +
+        sizeof(num_keys_recovered) +
+        sizeof(num_shallow_scrub_errors) +
+        sizeof(num_deep_scrub_errors) +
+        sizeof(num_objects_dirty) +
+        sizeof(num_whiteouts) +
+        sizeof(num_objects_omap) +
+        sizeof(num_objects_hit_set_archive) +
+        sizeof(num_objects_misplaced) +
+        sizeof(num_bytes_hit_set_archive));
+  }
   void encode(bufferlist& bl) const;
   void decode(bufferlist::iterator& bl);
   static void generate_test_instances(list<object_stat_sum_t*>& o);
