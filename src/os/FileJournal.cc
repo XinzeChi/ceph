@@ -818,7 +818,7 @@ int FileJournal::prepare_multi_write(bufferlist& bl, uint64_t& orig_ops, uint64_
           // throw out what we have so far
           full_state = FULL_FULL;
           while (!writeq_empty()) {
-            put_throttle(1, peek_write().bl.length());
+            put_throttle(1, peek_write().orig_len);
             pop_write();
           }
           print_header();
@@ -1219,7 +1219,7 @@ void FileJournal::write_thread_entry()
       if (write_stop) {
 	dout(20) << "write_thread_entry full and stopping, throw out queue and finish up" << dendl;
 	while (!writeq_empty()) {
-	  put_throttle(1, peek_write().bl.length());
+	  put_throttle(1, peek_write().orig_len);
 	  pop_write();
 	}  
 	print_header();
@@ -1727,7 +1727,7 @@ void FileJournal::committed_thru(uint64_t seq)
     dout(15) << " dropping committed but unwritten seq " << peek_write().seq 
 	     << " len " << peek_write().bl.length()
 	     << dendl;
-    put_throttle(1, peek_write().bl.length());
+    put_throttle(1, peek_write().orig_len);
     pop_write();
   }
   
