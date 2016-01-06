@@ -600,10 +600,11 @@ void ReplicatedBackend::submit_transaction(
     &op,
     op_t);
 
-  ObjectStore::Transaction local_t;
-  local_t.set_use_tbl(op_t->get_use_tbl());
+  ObjectStore::Transaction *local_t = op_t;
   if (!(t->get_temp_added().empty())) {
-    get_temp_coll(&local_t);
+    local_t = new ObjectStore::Transaction;
+    local_t->set_use_tbl(op_t->get_use_tbl());
+    get_temp_coll(local_t);
     add_temp_objs(t->get_temp_added());
   }
   clear_temp_objs(t->get_temp_cleared());
@@ -614,11 +615,11 @@ void ReplicatedBackend::submit_transaction(
     trim_to,
     trim_rollback_to,
     true,
-    &local_t);
-
-  local_t.append(*op_t);
-  local_t.swap(*op_t);
-  
+    local_t);
+  if (local_t != op_t) {
+    local_t->append(*op_t);
+    local_t->swap(*op_t);
+  }
   op_t->register_on_applied_sync(on_local_applied_sync);
   op_t->register_on_applied(
     parent->bless_context(
@@ -630,6 +631,9 @@ void ReplicatedBackend::submit_transaction(
       new C_OSD_OnOpCommit(this, &op)));
       
   parent->queue_transaction(op_t, op.op);
+  if (local_t != op_t) {
+    delete local_t;
+  }
   delete t;
 }
 
@@ -1153,19 +1157,26 @@ void ReplicatedBackend::sub_op_modify_impl(OpRequestRef op)
 
   bufferlist::iterator p = m->get_data().begin();
   ::decode(rm->opt, p);
-  rm->localt.set_use_tbl(rm->opt.get_use_tbl());
+  rm->bytes_written = rm->opt.get_encoded_bytes();
+  ObjectStore::Transaction *localt = &(rm->opt);
 
   if (m->new_temp_oid != hobject_t()) {
     dout(20) << __func__ << " start tracking temp " << m->new_temp_oid << dendl;
     add_temp_obj(m->new_temp_oid);
-    get_temp_coll(&rm->localt);
+    localt = new ObjectStore::Transaction;
+    localt->set_use_tbl(rm->opt.get_use_tbl());
+    get_temp_coll(localt);
   }
   if (m->discard_temp_oid != hobject_t()) {
     dout(20) << __func__ << " stop tracking temp " << m->discard_temp_oid << dendl;
     if (rm->opt.empty()) {
       dout(10) << __func__ << ": removing object " << m->discard_temp_oid
 	       << " since we won't get the transaction" << dendl;
-      rm->localt.remove(temp_coll, m->discard_temp_oid);
+      if (localt == &(rm->opt)) {
+        localt = new ObjectStore::Transaction;
+        localt->set_use_tbl(rm->opt.get_use_tbl());
+      }
+      localt->remove(temp_coll, m->discard_temp_oid);
     }
     clear_temp_obj(m->discard_temp_oid);
   }
@@ -1189,20 +1200,25 @@ void ReplicatedBackend::sub_op_modify_impl(OpRequestRef op)
     m->pg_trim_to,
     m->pg_trim_rollback_to,
     update_snaps,
-    &(rm->localt));
-
-  rm->bytes_written = rm->opt.get_encoded_bytes();
+    localt);
+  if (localt != &(rm->opt)) {
+    localt->append(rm->opt);
+    localt->swap(rm->opt);
+  }
 
   op->mark_started();
 
-  rm->localt.append(rm->opt);
-  rm->localt.register_on_commit(
+  rm->opt.register_on_commit(
     parent->bless_context(
       new C_OSD_RepModifyCommit(this, rm)));
-  rm->localt.register_on_applied(
+  rm->opt.register_on_applied(
     parent->bless_context(
       new C_OSD_RepModifyApply(this, rm)));
-  parent->queue_transaction(&(rm->localt), op);
+  parent->queue_transaction(&(rm->opt), op);
+  if (localt != &(rm->opt)) {
+    delete localt;
+    localt = NULL;
+  }
   // op is cleaned up by oncommit/onapply when both are executed
 }
 
