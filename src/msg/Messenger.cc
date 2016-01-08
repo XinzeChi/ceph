@@ -21,7 +21,6 @@ Messenger *Messenger::create(CephContext *cct, const string &type,
   if (!cfd.read() && cct->_conf->ms_enable_dma_latency) {
     int32_t latency = 0;
     int fd = open("/dev/cpu_dma_latency", O_WRONLY);
-    lderr(cct) << __func__ << " setting latency to " << latency << "us" << dendl;
     if (fd < 0) {
       assert(0 == "open /dev/cpu_dma_latency %m - need root permissions");
     }
