@@ -23,6 +23,7 @@
 #include "common/ceph_argparse.h"
 #include "common/config.h"
 #include "common/Thread.h"
+#include "include/event_type.h"
 
 #include "gtest/gtest.h"
 
@@ -31,6 +32,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/types.h>
+#include <poll.h>
 #include <time.h>
 #include <unistd.h>
 #include <iostream>
@@ -46,6 +48,10 @@
 #include "include/stringify.h"
 
 #include <boost/scope_exit.hpp>
+
+#ifdef HAVE_EVENTFD
+#include <sys/eventfd.h>
+#endif
 
 using namespace std;
 
