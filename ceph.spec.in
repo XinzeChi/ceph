@@ -423,7 +423,9 @@ python-rados, python-rbd and python-cephfs. Packages still depending on
 python-ceph should be fixed to depend on python-rados, python-rbd or
 python-cephfs instead.
 
-%global debug_package %{nil}
+%if 0%{?opensuse} || 0%{?suse_version}
+%debug_package
+%endif
 
 #################################################################################
 # common
