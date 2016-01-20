@@ -225,9 +225,9 @@ public:
 
   MOSDSubOp()
     : Message(MSG_OSD_SUBOP, HEAD_VERSION, COMPAT_VERSION) { }
-  MOSDSubOp(osd_reqid_t r, pg_shard_t from,
-	    spg_t p, const hobject_t& po,  int aw,
-	    epoch_t mape, ceph_tid_t rtid, eversion_t v)
+  MOSDSubOp(const osd_reqid_t& r, const pg_shard_t& from,
+	    const spg_t& p, const hobject_t& po,  int aw,
+	    epoch_t mape, ceph_tid_t rtid, const eversion_t& v)
     : Message(MSG_OSD_SUBOP, HEAD_VERSION, COMPAT_VERSION),
       map_epoch(mape),
       reqid(r),

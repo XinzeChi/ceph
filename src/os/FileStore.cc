@@ -145,20 +145,20 @@ ostream& operator<<(ostream& out, const FileStore::OpSequencer& s)
   return out << *s.parent;
 }
 
-int FileStore::get_cdir(coll_t cid, char *s, int len) 
+int FileStore::get_cdir(const coll_t& cid, char *s, int len) 
 {
   const string &cid_str(cid.to_str());
   return snprintf(s, len, "%s/current/%s", basedir.c_str(), cid_str.c_str());
 }
 
-int FileStore::get_index(coll_t cid, Index *index)
+int FileStore::get_index(const coll_t& cid, Index *index)
 {
   int r = index_manager.get_index(cid, basedir, index);
   assert(!m_filestore_fail_eio || r != -EIO);
   return r;
 }
 
-int FileStore::init_index(coll_t cid)
+int FileStore::init_index(const coll_t& cid)
 {
   char path[PATH_MAX];
   get_cdir(cid, path, sizeof(path));
@@ -201,7 +201,7 @@ int FileStore::lfn_truncate(coll_t cid, const ghobject_t& oid, off_t length)
   return r;
 }
 
-int FileStore::lfn_stat(coll_t cid, const ghobject_t& oid, struct stat *buf)
+int FileStore::lfn_stat(const coll_t& cid, const ghobject_t& oid, struct stat *buf)
 {
   IndexedPath path;
   Index index;
@@ -221,7 +221,7 @@ int FileStore::lfn_stat(coll_t cid, const ghobject_t& oid, struct stat *buf)
   return r;
 }
 
-int FileStore::lfn_open(coll_t cid,
+int FileStore::lfn_open(const coll_t& cid,
 			const ghobject_t& oid,
 			bool create,
 			FDRef *outfd,
@@ -2120,7 +2120,7 @@ void FileStore::_set_global_replay_guard(coll_t cid,
   dout(10) << __func__ << ": " << spos << " done" << dendl;
 }
 
-int FileStore::_check_global_replay_guard(coll_t cid,
+int FileStore::_check_global_replay_guard(const coll_t& cid,
 					  const SequencerPosition& spos)
 {
   if (!replaying || backend->can_checkpoint())
@@ -2256,7 +2256,7 @@ void FileStore::_close_replay_guard(int fd, const SequencerPosition& spos)
   dout(10) << "_close_replay_guard " << spos << " done" << dendl;
 }
 
-int FileStore::_check_replay_guard(coll_t cid, ghobject_t oid, const SequencerPosition& spos)
+int FileStore::_check_replay_guard(const coll_t& cid, const ghobject_t& oid, const SequencerPosition& spos)
 {
   if (!replaying || backend->can_checkpoint())
     return 1;
@@ -2276,7 +2276,7 @@ int FileStore::_check_replay_guard(coll_t cid, ghobject_t oid, const SequencerPo
   return ret;
 }
 
-int FileStore::_check_replay_guard(coll_t cid, const SequencerPosition& spos)
+int FileStore::_check_replay_guard(const coll_t& cid, const SequencerPosition& spos)
 {
   if (!replaying || backend->can_checkpoint())
     return 1;
@@ -2364,8 +2364,8 @@ unsigned FileStore::_do_transaction(
       break;
     case Transaction::OP_TOUCH:
       {
-        coll_t cid = i.get_cid(op->cid);
-        ghobject_t oid = i.get_oid(op->oid);
+        const coll_t& cid = i.get_cid(op->cid);
+        const ghobject_t& oid = i.get_oid(op->oid);
         tracepoint(objectstore, touch_enter, osr_name);
         if (_check_replay_guard(cid, oid, spos) > 0)
           r = _touch(cid, oid);
@@ -2375,8 +2375,8 @@ unsigned FileStore::_do_transaction(
       
     case Transaction::OP_WRITE:
       {
-        coll_t cid = i.get_cid(op->cid);
-        ghobject_t oid = i.get_oid(op->oid);
+        const coll_t& cid = i.get_cid(op->cid);
+        const ghobject_t& oid = i.get_oid(op->oid);
         uint64_t off = op->off;
         uint64_t len = op->len;
         uint32_t fadvise_flags = i.get_fadvise_flags();
@@ -2422,8 +2422,8 @@ unsigned FileStore::_do_transaction(
       
     case Transaction::OP_REMOVE:
       {
-        coll_t cid = i.get_cid(op->cid);
-        ghobject_t oid = i.get_oid(op->oid);
+        const coll_t& cid = i.get_cid(op->cid);
+        const ghobject_t& oid = i.get_oid(op->oid);
         tracepoint(objectstore, remove_enter, osr_name);
         if (_check_replay_guard(cid, oid, spos) > 0)
           r = _remove(cid, oid, spos, osr);
@@ -2433,8 +2433,8 @@ unsigned FileStore::_do_transaction(
       
     case Transaction::OP_SETATTR:
       {
-        coll_t cid = i.get_cid(op->cid);
-        ghobject_t oid = i.get_oid(op->oid);
+        const coll_t& cid = i.get_cid(op->cid);
+        const ghobject_t& oid = i.get_oid(op->oid);
         string name = i.decode_string();
         bufferlist bl;
         i.decode_bl(bl);
@@ -2453,8 +2453,8 @@ unsigned FileStore::_do_transaction(
       
     case Transaction::OP_SETATTRS:
       {
-        coll_t cid = i.get_cid(op->cid);
-        ghobject_t oid = i.get_oid(op->oid);
+        const coll_t& cid = i.get_cid(op->cid);
+        const ghobject_t& oid = i.get_oid(op->oid);
         map<string, bufferptr> aset;
         i.decode_attrset(aset);
         tracepoint(objectstore, setattrs_enter, osr_name);
@@ -2480,8 +2480,8 @@ unsigned FileStore::_do_transaction(
 
     case Transaction::OP_RMATTRS:
       {
-        coll_t cid = i.get_cid(op->cid);
-        ghobject_t oid = i.get_oid(op->oid);
+        const coll_t& cid = i.get_cid(op->cid);
+        const ghobject_t& oid = i.get_oid(op->oid);
         tracepoint(objectstore, rmattrs_enter, osr_name);
         if (_check_replay_guard(cid, oid, spos) > 0)
           r = _rmattrs(cid, oid, spos);
@@ -2670,8 +2670,8 @@ unsigned FileStore::_do_transaction(
       break;
     case Transaction::OP_OMAP_SETKEYS:
       {
-        coll_t cid = i.get_cid(op->cid);
-        ghobject_t oid = i.get_oid(op->oid);
+        const coll_t& cid = i.get_cid(op->cid);
+        const ghobject_t& oid = i.get_oid(op->oid);
         map<string, bufferlist> aset;
         i.decode_attrset(aset);
         tracepoint(objectstore, omap_setkeys_enter, osr_name);
@@ -2681,8 +2681,8 @@ unsigned FileStore::_do_transaction(
       break;
     case Transaction::OP_OMAP_RMKEYS:
       {
-        coll_t cid = i.get_cid(op->cid);
-        ghobject_t oid = i.get_oid(op->oid);
+        const coll_t& cid = i.get_cid(op->cid);
+        const ghobject_t& oid = i.get_oid(op->oid);
         set<string> keys;
         i.decode_keyset(keys);
         tracepoint(objectstore, omap_rmkeys_enter, osr_name);

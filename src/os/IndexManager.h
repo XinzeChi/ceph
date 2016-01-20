@@ -65,7 +65,7 @@ class IndexManager {
    * @param [out] index Index for c
    * @return error code
    */
-  int build_index(coll_t c, const char *path, CollectionIndex **index);
+  int build_index(const coll_t& c, const char *path, CollectionIndex **index);
 public:
   /// Constructor
   IndexManager(bool upgrade) : lock("IndexManager lock"),
@@ -81,7 +81,7 @@ public:
    * @param [out] index Index for c
    * @return error code
    */
-  int get_index(coll_t c, const string& baseDir, Index *index);
+  int get_index(const coll_t& c, const string& baseDir, Index *index);
 
   /**
    * Initialize index for collection c at path
@@ -91,7 +91,7 @@ public:
    * @param [in] filestore_version version of containing FileStore
    * @return error code
    */
-  int init_index(coll_t c, const char *path, uint32_t filestore_version);
+  int init_index(const coll_t& c, const char *path, uint32_t filestore_version);
 };
 
 #endif

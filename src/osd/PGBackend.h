@@ -509,9 +509,9 @@
      Context *on_local_applied_sync,      ///< [in] called when applied locally
      Context *on_all_applied,             ///< [in] called when all acked
      Context *on_all_commit,              ///< [in] called when all commit
-     ceph_tid_t tid,                      ///< [in] tid
-     osd_reqid_t reqid,                   ///< [in] reqid
-     OpRequestRef op                      ///< [in] op
+     ceph_tid_t &tid,                      ///< [in] tid
+     osd_reqid_t &reqid,                   ///< [in] reqid
+     OpRequestRef &op                      ///< [in] op
      ) = 0;
 
 

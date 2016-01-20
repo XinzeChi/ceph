@@ -333,7 +333,7 @@ private:
 	waiting_for_applied.empty();
     }
   };
-  map<ceph_tid_t, InProgressOp> in_progress_ops;
+  unordered_map<ceph_tid_t, InProgressOp> in_progress_ops;
 public:
   PGTransaction *get_transaction();
   friend class C_OSD_OnOpCommit;
@@ -349,9 +349,9 @@ public:
     Context *on_local_applied_sync,
     Context *on_all_applied,
     Context *on_all_commit,
-    ceph_tid_t tid,
-    osd_reqid_t reqid,
-    OpRequestRef op
+    ceph_tid_t &tid,
+    osd_reqid_t &reqid,
+    OpRequestRef &op
     );
 
 private:
@@ -359,12 +359,12 @@ private:
   Message * generate_subop(
     const hobject_t &soid,
     const eversion_t &at_version,
-    ceph_tid_t tid,
-    osd_reqid_t reqid,
-    eversion_t pg_trim_to,
-    eversion_t pg_trim_rollback_to,
-    hobject_t new_temp_oid,
-    hobject_t discard_temp_oid,
+    const ceph_tid_t &tid,
+    const osd_reqid_t &reqid,
+    const eversion_t &pg_trim_to,
+    const eversion_t &pg_trim_rollback_to,
+    const hobject_t &new_temp_oid,
+    const hobject_t &discard_temp_oid,
     const vector<pg_log_entry_t> &log_entries,
     boost::optional<pg_hit_set_history_t> &hset_history,
     InProgressOp *op,
@@ -374,12 +374,12 @@ private:
   void issue_op(
     const hobject_t &soid,
     const eversion_t &at_version,
-    ceph_tid_t tid,
-    osd_reqid_t reqid,
-    eversion_t pg_trim_to,
-    eversion_t pg_trim_rollback_to,
-    hobject_t new_temp_oid,
-    hobject_t discard_temp_oid,
+    const ceph_tid_t &tid,
+    const osd_reqid_t &reqid,
+    const eversion_t &pg_trim_to,
+    const eversion_t &pg_trim_rollback_to,
+    const hobject_t &new_temp_oid,
+    const hobject_t &discard_temp_oid,
     const vector<pg_log_entry_t> &log_entries,
     boost::optional<pg_hit_set_history_t> &hset_history,
     InProgressOp *op,
