@@ -6333,6 +6333,7 @@ void OSD::handle_osd_map(MOSDMap *m)
 
   bool do_shutdown = false;
   bool do_restart = false;
+  bool network_error = false;
   if (osdmap->get_epoch() > 0 &&
       is_active()) {
     if (!osdmap->exists(whoami)) {
@@ -6396,16 +6397,22 @@ void OSD::handle_osd_map(MOSDMap *m)
 	avoid_ports.insert(hb_front_server_messenger->get_myaddr().get_port());
 
 	int r = cluster_messenger->rebind(avoid_ports);
-	if (r != 0)
+	if (r != 0) {
 	  do_shutdown = true;  // FIXME: do_restart?
+          network_error = true;
+        }
 
 	r = hb_back_server_messenger->rebind(avoid_ports);
-	if (r != 0)
+	if (r != 0) {
 	  do_shutdown = true;  // FIXME: do_restart?
+          network_error = true;
+        }
 
 	r = hb_front_server_messenger->rebind(avoid_ports);
-	if (r != 0)
+	if (r != 0) {
 	  do_shutdown = true;  // FIXME: do_restart?
+          network_error = true;
+        }
 
 	hbclient_messenger->mark_down_all();
 
@@ -6452,16 +6459,25 @@ void OSD::handle_osd_map(MOSDMap *m)
     dout(10) << " msg say newest map is " << m->newest_map << ", requesting more" << dendl;
     osdmap_subscribe(osdmap->get_epoch()+1, true);
   }
+  else if (do_shutdown) {
+    if (network_error) {
+      Mutex::Locker l(heartbeat_lock);	
+      map<int, entity_inst_t>::iterator it = failure_pending.begin();
+      while (it != failure_pending.end()) {
+        dout(10) << "handle_osd_ping canceling in-flight failure report for osd." << it->first << dendl;
+        send_still_alive(osdmap->get_epoch(), it->second);
+        failure_pending.erase(it++);
+      }
+    }	
+    osd_lock.Unlock();
+    shutdown();
+    osd_lock.Lock();
+  }
   else if (is_booting()) {
     start_boot();  // retry
   }
   else if (do_restart)
     start_boot();
-
-  osd_lock.Unlock();
-  if (do_shutdown)
-    shutdown();
-  osd_lock.Lock();
 
   m->put();
 }
