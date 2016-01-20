@@ -60,7 +60,17 @@ int FileJournal::_open(bool forwrite, bool create)
   if (forwrite) {
     flags = O_RDWR;
     if (directio)
-      flags |= O_DIRECT | O_DSYNC;
+      flags |= O_DIRECT;
+    if (g_conf->journal_force_odsync) {
+      flags |= O_DSYNC;
+      dout(20) << __func__ << " journal write force odsync" << dendl;
+    } else {
+      derr << TEXT_RED
+           << " ** WARNING: FileJournal write without O_DSYNC. You should make" << ".\n"
+           << "    sure the control persists all the data to disk. Such as there is battery." << ".\n"
+           << TEXT_NORMAL
+           << dendl;
+    }
   } else {
     flags = O_RDONLY;
   }
