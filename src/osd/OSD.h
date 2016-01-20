@@ -326,7 +326,7 @@ public:
   PerfCounters *&logger;
   PerfCounters *&recoverystate_perf;
   MonClient   *&monc;
-  ShardedThreadPool::ShardedWQ < pair <PGRef, OpRequestRef> > &op_wq;
+  ShardedThreadPool::ShardedWQ <const pair <PGRef, OpRequestRef> &> &op_wq;
   ThreadPool::BatchWorkQueue<PG> &peering_wq;
   ThreadPool::WorkQueue<PG> &recovery_wq;
   ThreadPool::WorkQueue<PG> &snap_trim_wq;
@@ -1434,7 +1434,7 @@ private:
   // -- op queue --
 
  
-  class ShardedOpWQ: public ShardedThreadPool::ShardedWQ < pair <PGRef, OpRequestRef> > {
+  class ShardedOpWQ: public ShardedThreadPool::ShardedWQ <const pair <PGRef, OpRequestRef> &> {
 
     struct ShardData {
       Mutex sdata_lock;
@@ -1454,7 +1454,7 @@ private:
 
     public:
       ShardedOpWQ(uint32_t pnum_shards, OSD *o, time_t ti, time_t si, ShardedThreadPool* tp):
-        ShardedThreadPool::ShardedWQ < pair <PGRef, OpRequestRef> >(ti, si, tp),
+        ShardedThreadPool::ShardedWQ <const pair <PGRef, OpRequestRef> &>(ti, si, tp),
         osd(o), num_shards(pnum_shards) {
         for(uint32_t i = 0; i < num_shards; i++) {
           char lock_name[32] = {0};
@@ -1477,8 +1477,8 @@ private:
       }
 
       void _process(uint32_t thread_index, heartbeat_handle_d *hb);
-      void _enqueue(pair <PGRef, OpRequestRef> item);
-      void _enqueue_front(pair <PGRef, OpRequestRef> item);
+      void _enqueue(const pair <PGRef, OpRequestRef> &item);
+      void _enqueue_front(const pair <PGRef, OpRequestRef> &item);
       
       void return_waiting_threads() {
         for(uint32_t i = 0; i < num_shards; i++) {

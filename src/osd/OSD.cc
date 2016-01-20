@@ -8072,14 +8072,12 @@ void OSD::handle_op(OpRequestRef& op, OSDMapRef& osdmap)
     return;
   }
 
-  // set up a map send if the Op gets blocked for some reason
-  send_map_on_destruct share_map(this, m, osdmap, m->get_map_epoch());
   Session *client_session =
       static_cast<Session*>(m->get_connection()->get_priv());
   if (client_session) {
     client_session->sent_epoch_lock.Lock();
   }
-  share_map.should_send = service.should_share_map(
+  bool should_send = service.should_share_map(
       m->get_source(), m->get_connection().get(), m->get_map_epoch(),
       osdmap, &client_session->last_sent_epoch);
   if (client_session) {
@@ -8147,12 +8145,15 @@ void OSD::handle_op(OpRequestRef& op, OSDMapRef& osdmap)
 
   PG *pg = get_pg_or_queue_for_pg(pgid, op);
   if (pg) {
-    op->send_map_update = share_map.should_send;
+    op->send_map_update = should_send;
     op->sent_epoch = m->get_map_epoch();
     enqueue_op(pg, op);
-    share_map.should_send = false;
     return;
   }
+
+  // set up a map send if the Op gets blocked for some reason
+  send_map_on_destruct share_map(this, m, osdmap, m->get_map_epoch());
+  share_map.should_send = should_send;
 
   // ok, we didn't have the PG.  let's see if it's our fault or the client's.
 
@@ -8339,7 +8340,7 @@ void OSD::ShardedOpWQ::_process(uint32_t thread_index, heartbeat_handle_d *hb ) 
   (item.first)->unlock();
 }
 
-void OSD::ShardedOpWQ::_enqueue(pair<PGRef, OpRequestRef> item) {
+void OSD::ShardedOpWQ::_enqueue(const pair<PGRef, OpRequestRef> &item) {
 
   uint32_t shard_index = (((item.first)->get_pgid().ps())% shard_list.size());
 
@@ -8363,26 +8364,39 @@ void OSD::ShardedOpWQ::_enqueue(pair<PGRef, OpRequestRef> item) {
 
 }
 
-void OSD::ShardedOpWQ::_enqueue_front(pair<PGRef, OpRequestRef> item) {
+void OSD::ShardedOpWQ::_enqueue_front(const pair<PGRef, OpRequestRef> &item) {
 
   uint32_t shard_index = (((item.first)->get_pgid().ps())% shard_list.size());
 
   ShardData* sdata = shard_list[shard_index];
   assert (NULL != sdata);
   sdata->sdata_op_ordering_lock.Lock();
+  pair<PGRef, OpRequestRef> new_item;
   if (sdata->pg_for_processing.count(&*(item.first))) {
-    sdata->pg_for_processing[&*(item.first)].push_front(item.second);
-    item.second = sdata->pg_for_processing[&*(item.first)].back();
-    sdata->pg_for_processing[&*(item.first)].pop_back();
+    new_item = item;
+    sdata->pg_for_processing[&*(new_item.first)].push_front(new_item.second);
+    new_item.second = sdata->pg_for_processing[&*(new_item.first)].back();
+    sdata->pg_for_processing[&*(new_item.first)].pop_back();
   }
-  unsigned priority = item.second->get_req()->get_priority();
-  unsigned cost = item.second->get_req()->get_cost();
-  if (priority >= CEPH_MSG_PRIO_LOW)
-    sdata->pqueue.enqueue_strict_front(
-      item.second->get_req()->get_source_inst(),priority, item);
-  else
-    sdata->pqueue.enqueue_front(item.second->get_req()->get_source_inst(),
-      priority, cost, item);
+  if (!new_item.second) {
+    unsigned priority = item.second->get_req()->get_priority();
+    unsigned cost = item.second->get_req()->get_cost();
+    if (priority >= CEPH_MSG_PRIO_LOW)
+      sdata->pqueue.enqueue_strict_front(
+        item.second->get_req()->get_source_inst(),priority, item);
+    else
+      sdata->pqueue.enqueue_front(item.second->get_req()->get_source_inst(),
+        priority, cost, item);
+  } else {
+    unsigned priority = new_item.second->get_req()->get_priority();
+    unsigned cost = new_item.second->get_req()->get_cost();
+    if (priority >= CEPH_MSG_PRIO_LOW)
+      sdata->pqueue.enqueue_strict_front(
+        new_item.second->get_req()->get_source_inst(),priority, new_item);
+    else
+      sdata->pqueue.enqueue_front(new_item.second->get_req()->get_source_inst(),
+        priority, cost, new_item);
+  }
 
   sdata->sdata_op_ordering_lock.Unlock();
   sdata->sdata_lock.Lock();
