@@ -1558,6 +1558,8 @@ void OSDMonitor::check_failures(utime_t now)
 
 bool OSDMonitor::check_failure(utime_t now, int target_osd, failure_info_t& fi)
 {
+  set<string> reporters_by_subtree;
+  string reporter_subtree_level = g_conf->mon_osd_reporter_subtree_level;
   utime_t orig_grace(g_conf->osd_heartbeat_grace, 0);
   utime_t max_failed_since = fi.get_failed_since();
   utime_t failed_for = now - max_failed_since;
@@ -1586,6 +1588,16 @@ bool OSDMonitor::check_failure(utime_t now, int target_osd, failure_info_t& fi)
     for (map<int,failure_reporter_t>::iterator p = fi.reporters.begin();
 	 p != fi.reporters.end();
 	 ++p) {
+      // get the parent bucket whose type matches with "reporter_subtree_level".
+      // fall back to OSD if the level doesn't exist.
+      map<string, string> reporter_loc = osdmap.crush->get_full_location(p->first);
+      map<string, string>::iterator iter = reporter_loc.find(reporter_subtree_level);
+      if (iter == reporter_loc.end()) {
+	reporters_by_subtree.insert("osd." + p->first);
+      } else {
+	reporters_by_subtree.insert(iter->second);
+      }
+
       const osd_xinfo_t& xi = osdmap.get_xinfo(p->first);
       utime_t elapsed = now - xi.down_stamp;
       double decay = exp((double)elapsed * decay_k);
@@ -1596,9 +1608,9 @@ bool OSDMonitor::check_failure(utime_t now, int target_osd, failure_info_t& fi)
   }
 
   dout(10) << " osd." << target_osd << " has "
-	   << fi.reporters.size() << " reporters and "
-	   << fi.num_reports << " reports, "
-	   << grace << " grace (" << orig_grace << " + " << my_grace << " + " << peer_grace << "), max_failed_since " << max_failed_since
+	   << fi.reporters.size() << " reporters, "
+	   << grace << " grace (" << orig_grace << " + " << my_grace
+	   << " + " << peer_grace << "), max_failed_since " << max_failed_since
 	   << dendl;
 
   // already pending failure?
@@ -1608,15 +1620,17 @@ bool OSDMonitor::check_failure(utime_t now, int target_osd, failure_info_t& fi)
     return true;
   }
 
+
   if (failed_for >= grace &&
-      ((int)fi.reporters.size() >= g_conf->mon_osd_min_down_reporters) &&
-      (fi.num_reports >= g_conf->mon_osd_min_down_reports)) {
-    dout(1) << " we have enough reports/reporters to mark osd." << target_osd << " down" << dendl;
+      (int)reporters_by_subtree.size() >= g_conf->mon_osd_min_down_reporters) {
+    dout(1) << " we have enough reporters to mark osd." << target_osd
+	    << " down" << dendl;
     pending_inc.new_state[target_osd] = CEPH_OSD_UP;
 
     mon->clog->info() << osdmap.get_inst(target_osd) << " failed ("
-		     << fi.num_reports << " reports from " << (int)fi.reporters.size() << " peers after "
-		     << failed_for << " >= grace " << grace << ")\n";
+		      << (int)reporters_by_subtree.size() << " reporters from different "
+		      << reporter_subtree_level << " after "
+		      << failed_for << " >= grace " << grace << ")\n";
     return true;
   }
   return false;
@@ -1624,7 +1638,8 @@ bool OSDMonitor::check_failure(utime_t now, int target_osd, failure_info_t& fi)
 
 bool OSDMonitor::prepare_failure(MOSDFailure *m)
 {
-  dout(1) << "prepare_failure " << m->get_target() << " from " << m->get_orig_source_inst()
+  dout(1) << "prepare_failure " << m->get_target()
+	  << " from " << m->get_orig_source_inst()
           << " is reporting failure:" << m->if_osd_failed() << dendl;
 
   int target_osd = m->get_target().name.num();
@@ -1634,8 +1649,11 @@ bool OSDMonitor::prepare_failure(MOSDFailure *m)
 
   // calculate failure time
   utime_t now = ceph_clock_now(g_ceph_context);
-  utime_t failed_since = m->get_recv_stamp() - utime_t(m->failed_for ? m->failed_for : g_conf->osd_heartbeat_grace, 0);
   
+  utime_t failed_since =
+    m->get_recv_stamp() -
+    utime_t(m->failed_for ? m->failed_for : g_conf->osd_heartbeat_grace, 0);
+
   if (m->if_osd_failed()) {
     // add a report
     mon->clog->debug() << m->get_target() << " reported failed by "
@@ -1651,7 +1669,7 @@ bool OSDMonitor::prepare_failure(MOSDFailure *m)
   } else {
     // remove the report
     mon->clog->debug() << m->get_target() << " failure report canceled by "
-		      << m->get_orig_source_inst() << "\n";
+		       << m->get_orig_source_inst() << "\n";
     if (failure_info.count(target_osd)) {
       failure_info_t& fi = failure_info[target_osd];
       list<MOSDFailure*> ls;
@@ -1663,12 +1681,12 @@ bool OSDMonitor::prepare_failure(MOSDFailure *m)
 	ls.pop_front();
       }
       if (fi.reporters.empty()) {
-	dout(10) << " removing last failure_info for osd." << target_osd << dendl;
+	dout(10) << " removing last failure_info for osd." << target_osd
+		 << dendl;
 	failure_info.erase(target_osd);
       } else {
 	dout(10) << " failure_info for osd." << target_osd << " now "
-		 << fi.reporters.size() << " reporters and "
-		 << fi.num_reports << " reports" << dendl;
+		 << fi.reporters.size() << " reporters" << dendl;
       }
     } else {
       dout(10) << " no failure_info for osd." << target_osd << dendl;
