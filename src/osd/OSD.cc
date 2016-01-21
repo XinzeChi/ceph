@@ -6201,16 +6201,22 @@ void OSD::handle_osd_map(MOSDMap *m)
       t.write(META_COLL, oid, 0, bl.length(), bl);
       pin_map_inc_bl(e, bl);
 
+      OSDMap::Incremental inc;
+      bufferlist::iterator p = bl.begin();
+      inc.decode(p);
+
       OSDMap *o = new OSDMap;
       if (e > 1) {
 	bufferlist obl;
 	get_map_bl(e - 1, obl);
 	o->decode(obl);
+        {
+          bufferlist orig_bl;
+          o->encode(orig_bl, inc.encode_features | CEPH_FEATURE_RESERVED);
+          dout(20) << "encode origin osd map crc " << orig_bl.crc32c(0) << dendl;
+        }
       }
 
-      OSDMap::Incremental inc;
-      bufferlist::iterator p = bl.begin();
-      inc.decode(p);
       if (o->apply_incremental(inc) < 0) {
 	derr << "ERROR: bad fsid?  i have " << osdmap->get_fsid() << " and inc has " << inc.fsid << dendl;
 	assert(0 == "bad fsid");
@@ -6233,6 +6239,8 @@ void OSD::handle_osd_map(MOSDMap *m)
 	dout(2) << "got incremental " << e
 		<< " but failed to encode full with correct crc; requesting"
 		<< dendl;
+	dout(20) << "osdmap crc " << o->get_crc() << " inc crc " << inc.full_crc 
+                 << ", encode full crc " << fbl.crc32c(0) << dendl;
 	clog->warn() << "failed to encode map e" << e << " with expected crc\n";
 	delete o;
 	MMonGetOSDMap *req = new MMonGetOSDMap;

@@ -344,6 +344,11 @@ void OSDMonitor::update_from_paxos(bool *need_bootstrap)
     assert(inc_bl.length());
 
     dout(7) << "update_from_paxos  applying incremental " << osdmap.epoch+1 << dendl;
+    {
+      bufferlist orig_bl;
+      ::encode(osdmap, orig_bl, mon->quorum_features | CEPH_FEATURE_RESERVED);
+      dout(20) << "encode origin osd map crc " << orig_bl.crc32c(0) << dendl;
+    }
     OSDMap::Incremental inc(inc_bl);
     err = osdmap.apply_incremental(inc);
     assert(err == 0);
@@ -377,7 +382,8 @@ void OSDMonitor::update_from_paxos(bool *need_bootstrap)
 	// will also be brought back into sync when they discover the
 	// crc mismatch and request a full map from a mon.
 	derr << __func__ << " full map CRC mismatch, resetting to canonical"
-	     << dendl;
+             << ", osdmap crc " << osdmap.crc << " inc crc " << inc.full_crc
+             << ", encode full crc " << full_bl.crc32c(0) << dendl;
 	osdmap = OSDMap();
 	osdmap.decode(orig_full_bl);
       }
@@ -1083,6 +1089,11 @@ void OSDMonitor::encode_pending(MonitorDBStore::TransactionRef t)
   OSDMap tmp;
   {
     tmp.deepish_copy_from(osdmap);
+    {
+      bufferlist orig_bl;
+      ::encode(tmp, orig_bl, mon->quorum_features | CEPH_FEATURE_RESERVED);
+      dout(20) << "encode origin osd map crc " << orig_bl.crc32c(0) << dendl;
+    }
     tmp.apply_incremental(pending_inc);
     bufferlist fullbl;
     ::encode(tmp, fullbl, mon->quorum_features | CEPH_FEATURE_RESERVED);
@@ -1092,6 +1103,7 @@ void OSDMonitor::encode_pending(MonitorDBStore::TransactionRef t)
     // overwrite this.  new ones will now skip the local full map
     // encode and reload from this.
     put_version_full(t, pending_inc.epoch, fullbl);
+    dout(20) << "encode full crc " << fullbl.crc32c(0) << dendl;
   }
 
   // encode
