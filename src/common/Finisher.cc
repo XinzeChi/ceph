@@ -40,7 +40,7 @@ void Finisher::wait_for_empty()
 void *Finisher::finisher_thread_entry()
 {
   finisher_lock.Lock();
-  ldout(cct, 1) << "finisher_thread " << name << " pid(" << finisher_thread.get_pid() << ") start" << dendl;
+  ldout(cct, 5) << "finisher_thread " << name << " pid(" << finisher_thread.get_pid() << ") start" << dendl;
 
   while (!finisher_stop) {
     while (!finisher_queue.empty()) {
