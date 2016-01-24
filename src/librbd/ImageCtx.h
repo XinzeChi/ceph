@@ -12,6 +12,7 @@
 #include <boost/optional.hpp>
 
 #include "common/Cond.h"
+#include "common/event_socket.h"
 #include "common/Mutex.h"
 #include "common/Readahead.h"
 #include "common/RWLock.h"
@@ -44,6 +45,7 @@ namespace librbd {
   class CopyupRequest;
   class ImageWatcher;
   class AioRequest;
+  class AioCompletion;
 
   struct ImageCtx {
     CephContext *cct;
@@ -96,6 +98,7 @@ namespace librbd {
     Mutex async_ops_lock; // protects async_ops and async_requests
     Mutex copyup_list_lock; // protects copyup_waiting_list
     Mutex throttle_lock; // protects throttle_req
+    Mutex completed_reqs_lock; // protects completed_reqs
 
     unsigned extra_read_flags;
 
@@ -136,6 +139,8 @@ namespace librbd {
     atomic_t async_request_seq;
 
     xlist<AsyncResizeRequest*> async_resize_reqs;
+    xlist<AioCompletion*> completed_reqs;
+    EventSocket event_socket;
 
     ContextWQ *aio_work_queue;
     // Configuration
@@ -245,6 +250,8 @@ namespace librbd {
     void aware_metadata(string prefix, map<string, bufferlist> &metadata);
     bool io_limits_intercept(AioRequest *req, bool is_write);
     void process_throttle_req(bool is_write);
+
+    void clear_pending_completions();
   };
 }
 
