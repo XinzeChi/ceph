@@ -129,6 +129,8 @@ private:
 void submit_aio_read(librbd::ImageCtx *ictx, uint64_t off, size_t len,
                      char *buf, bufferlist *pbl, librbd::AioCompletion *c,
                      int op_flags) {
+  if (ictx->event_socket.is_valid())
+    c->set_event_notify(true);
   if (ictx->cct->_conf->rbd_non_blocking_aio) {
     ictx->aio_work_queue->queue(new C_AioReadWQ(ictx, off, len, buf, pbl, c,
                                                 op_flags));
@@ -139,6 +141,8 @@ void submit_aio_read(librbd::ImageCtx *ictx, uint64_t off, size_t len,
 
 void submit_aio_write(librbd::ImageCtx *ictx, uint64_t off, size_t len,
                       const char *buf, librbd::AioCompletion *c, int op_flags) {
+  if (ictx->event_socket.is_valid())
+    c->set_event_notify(true);
   if (ictx->cct->_conf->rbd_non_blocking_aio) {
     ictx->aio_work_queue->queue(new C_AioWriteWQ(ictx, off, len, buf, c,
                                                  op_flags));
@@ -149,6 +153,8 @@ void submit_aio_write(librbd::ImageCtx *ictx, uint64_t off, size_t len,
 
 void submit_aio_discard(librbd::ImageCtx *ictx, uint64_t off, uint64_t len,
                         librbd::AioCompletion *c) {
+  if (ictx->event_socket.is_valid())
+    c->set_event_notify(true);
   if (ictx->cct->_conf->rbd_non_blocking_aio) {
     ictx->aio_work_queue->queue(new C_AioDiscardWQ(ictx, off, len, c));
   } else {
@@ -157,6 +163,8 @@ void submit_aio_discard(librbd::ImageCtx *ictx, uint64_t off, uint64_t len,
 }
 
 void submit_aio_flush(librbd::ImageCtx *ictx, librbd::AioCompletion *c) {
+  if (ictx->event_socket.is_valid())
+    c->set_event_notify(true);
   if (ictx->cct->_conf->rbd_non_blocking_aio) {
     ictx->aio_work_queue->queue(new C_AioFlushWQ(ictx, c));
   } else {
